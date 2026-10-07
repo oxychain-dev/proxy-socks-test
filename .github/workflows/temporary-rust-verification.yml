@@ -1,0 +1,30 @@
+name: Temporary Rust verification
+
+on:
+  push:
+    branches:
+      - feature/proxy-list-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+      - name: Install lint components
+        run: rustup component add rustfmt clippy
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Cargo check
+        run: cargo check --all-targets
+      - name: Unit tests
+        run: cargo test --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
