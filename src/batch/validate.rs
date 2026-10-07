@@ -7,6 +7,21 @@ use std::{
 };
 use tokio::{net::lookup_host, time::timeout};
 
+pub(super) async fn detect_tester_ip(options: &BatchOptions) -> Result<IpAddr> {
+    let client = Client::builder()
+        .no_proxy()
+        .user_agent("proxy-socks-test/0.2")
+        .timeout(Duration::from_secs(options.timeout_secs))
+        .build()?;
+    let response = client
+        .get(&options.check_url)
+        .send()
+        .await?
+        .error_for_status()?;
+    let body = response.text().await?;
+    parse_exit_ip(&body)
+}
+
 pub(super) async fn validate_proxy(proxy: ProxySpec, options: &BatchOptions) -> BatchResult {
     let tested_ip = match resolve_first_ip(&proxy.host, proxy.port, options.timeout_secs).await {
         Ok(ip) => ip,
