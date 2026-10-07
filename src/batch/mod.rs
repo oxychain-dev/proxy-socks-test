@@ -151,7 +151,8 @@ impl BatchResult {
         self.metrics.is_some()
     }
 
-    fn tsv_row(&self) -> String {
+    fn tsv_row(&self, tester_ip: Option<IpAddr>) -> String {
+        let tester_ip = tester_ip.map(|ip| ip.to_string()).unwrap_or_default();
         let protocol = self
             .metrics
             .as_ref()
@@ -170,9 +171,10 @@ impl BatchResult {
             .unwrap_or_default();
 
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             tsv_escape(&self.proxy.source),
             tsv_escape(&self.proxy.raw),
+            tester_ip,
             protocol,
             tsv_escape(&self.proxy.host),
             tested_ip,
@@ -206,6 +208,16 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     }
 
     let default_protocol = ProxyProtocol::parse(&options.default_protocol)?;
+    let tester_ip = match validate::detect_tester_ip(&options).await {
+        Ok(ip) => {
+            println!("tester public IP: {ip}");
+            Some(ip)
+        }
+        Err(err) => {
+            eprintln!("warning: could not determine tester public IP: {err:#}");
+            None
+        }
+    };
     let source_client = Client::builder()
         .no_proxy()
         .user_agent("proxy-socks-test/0.2")
@@ -229,7 +241,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     let mut output = BufWriter::new(output_file);
     output
         .write_all(
-            b"source\tinput\tprotocol\tproxy_host\ttested_ip\tproxy_port\tvalid\tlatency_ms\texit_ip\terror\n",
+            b"source\tinput\ttester_ip\tprotocol\tproxy_host\ttested_ip\tproxy_port\tvalid\tlatency_ms\texit_ip\terror\n",
         )
         .await?;
 
@@ -266,7 +278,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
                     .await?;
             }
         }
-        output.write_all(result.tsv_row().as_bytes()).await?;
+        output.write_all(result.tsv_row(tester_ip).as_bytes()).await?;
 
         if tested % 100 == 0 || tested == total {
             println!("progress: {tested}/{total}, valid: {valid}");
