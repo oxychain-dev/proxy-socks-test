@@ -95,7 +95,8 @@ The TSV contains:
 
 `source, input, tester_ip, protocol, proxy_host, tested_ip, proxy_port, valid, latency_ms, exit_ip, error`
 
-- `tester_ip` is the tester machine's public IP measured without a proxy.\n- `tested_ip` is the resolved proxy endpoint IP that was actually tested.
+- `tester_ip` is the tester machine's public IP measured without a proxy.
+- `tested_ip` is the resolved proxy endpoint IP that was actually tested.
 - `exit_ip` is the public IP observed through the connected proxy.
 - `latency_ms` is the end-to-end time for the validation request.
 - `valid-output`, when supplied, receives only successful proxies in normalized SOCKS URL form.
