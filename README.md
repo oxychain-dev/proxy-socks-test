@@ -53,6 +53,53 @@
 proxy-socks-test --proxyip 127.0.0.1 --proxyport 1080 --serverip 127.0.0.1 --serverport 3307 --casename socks5_connect --debug
 ```
 
+## Batch Proxy-List Validation
+
+The same executable can also collect, deduplicate, validate, and export SOCKS proxy lists.
+
+Inputs can be combined in one run:
+
+- `--proxy-file <path-or-url>`: a local file (or HTTP(S) URL) containing proxy entries.
+- `--source-list <path-or-url>`: a local file (or HTTP(S) URL) whose non-comment lines are URLs of proxy lists.
+- `--source-url <url>`: a direct proxy-list URL. Repeat the option to add more URLs.
+
+Supported proxy entry forms include:
+
+- `1.2.3.4:1080`
+- `1.2.3.4:1080:user:pass`
+- `socks5://user:pass@host:1080`
+- `socks4://host:1080`
+- `socks4a://host:1080`
+
+For entries without a scheme, `--protocol auto` (the default) tries SOCKS5, then SOCKS4a, then SOCKS4. Authenticated scheme-less entries are tested as SOCKS5.
+
+### Batch Example
+
+```sh
+proxy-socks-test \
+  --proxy-file proxies.txt \
+  --source-list proxy-sources.txt \
+  --source-url https://example.com/socks.txt \
+  --protocol auto \
+  --concurrency 200 \
+  --timeout 8 \
+  --output proxy-results.tsv \
+  --valid-output valid-proxies.txt
+```
+
+The default check endpoint is `https://api.ipify.org`; replace it with `--check-url <url>` when needed. The endpoint must return the caller IP in its response.
+
+### TSV Output
+
+The TSV contains:
+
+`source, input, protocol, proxy_host, tested_ip, proxy_port, valid, latency_ms, exit_ip, error`
+
+- `tested_ip` is the resolved proxy endpoint IP that was actually tested.
+- `exit_ip` is the public IP observed through the connected proxy.
+- `latency_ms` is the end-to-end time for the validation request.
+- `valid-output`, when supplied, receives only successful proxies in normalized SOCKS URL form.
+
 ## Test Cases
 
 ### TCP Connect
