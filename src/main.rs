@@ -74,6 +74,8 @@
 //!
 //! The source code is available on [GitHub](https://github.com/oxychain-dev/proxy-socks-test).
 //!
+mod batch;
+
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use libsocks_client::SocksClientBuilder;
@@ -710,21 +712,21 @@ fn parse_args() -> clap::ArgMatches {
                 .long("proxyip")
                 .value_name("ipaddress")
                 .help("set proxy ipaddress")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("proxyport")
                 .long("proxyport")
                 .value_name("port")
                 .help("set proxy port")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("serverip")
                 .long("serverip")
                 .value_name("ipaddress")
                 .help("set proxy test running host ipaddress,default use 0.0.0.0")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("serverport")
@@ -768,7 +770,70 @@ fn parse_args() -> clap::ArgMatches {
                     "socks5_auth_udp",
                 ])
                 .hide_possible_values(false)
-                .required(true),
+                .required(false),
+        )
+        .arg(
+            clap::Arg::new("proxy-file")
+                .long("proxy-file")
+                .value_name("path-or-url")
+                .action(clap::ArgAction::Append)
+                .help("read proxy entries from a local file or HTTP(S) URL"),
+        )
+        .arg(
+            clap::Arg::new("source-list")
+                .long("source-list")
+                .value_name("path-or-url")
+                .action(clap::ArgAction::Append)
+                .help("read a file/URL whose non-comment lines are proxy-list URLs"),
+        )
+        .arg(
+            clap::Arg::new("source-url")
+                .long("source-url")
+                .value_name("url")
+                .action(clap::ArgAction::Append)
+                .help("download proxy entries directly from an HTTP(S) URL"),
+        )
+        .arg(
+            clap::Arg::new("output")
+                .long("output")
+                .value_name("path")
+                .default_value("proxy-results.tsv")
+                .help("write batch validation results as TSV"),
+        )
+        .arg(
+            clap::Arg::new("valid-output")
+                .long("valid-output")
+                .value_name("path")
+                .help("optionally write valid normalized proxies, one per line"),
+        )
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_name("protocol")
+                .value_parser(["auto", "socks4", "socks4a", "socks5"])
+                .default_value("auto")
+                .help("default protocol for entries without a scheme"),
+        )
+        .arg(
+            clap::Arg::new("concurrency")
+                .long("concurrency")
+                .value_name("count")
+                .default_value("100")
+                .help("maximum concurrent proxy checks"),
+        )
+        .arg(
+            clap::Arg::new("timeout")
+                .long("timeout")
+                .value_name("seconds")
+                .default_value("10")
+                .help("per-proxy request timeout in seconds"),
+        )
+        .arg(
+            clap::Arg::new("check-url")
+                .long("check-url")
+                .value_name("url")
+                .default_value("https://api.ipify.org")
+                .help("HTTP(S) endpoint that returns the caller IP as plain text"),
         )
         .arg(
             clap::Arg::new("debug")
@@ -798,17 +863,70 @@ async fn main() -> Result<()> {
 
     let matches = parse_args();
 
-    let proxyip = matches.get_one::<String>("proxyip").expect("proxyip").clone();
+    let proxy_files = matches
+        .get_many::<String>("proxy-file")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let source_lists = matches
+        .get_many::<String>("source-list")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let source_urls = matches
+        .get_many::<String>("source-url")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let batch_mode = !proxy_files.is_empty() || !source_lists.is_empty() || !source_urls.is_empty();
+
+    if batch_mode {
+        let concurrency = matches
+            .get_one::<String>("concurrency")
+            .expect("concurrency")
+            .parse::<usize>()
+            .map_err(|err| anyhow!("invalid --concurrency: {err}"))?;
+        let timeout_secs = matches
+            .get_one::<String>("timeout")
+            .expect("timeout")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --timeout: {err}"))?;
+
+        return batch::run_batch(batch::BatchOptions {
+            proxy_files,
+            source_lists,
+            source_urls,
+            output: matches.get_one::<String>("output").expect("output").clone(),
+            valid_output: matches.get_one::<String>("valid-output").cloned(),
+            default_protocol: matches.get_one::<String>("protocol").expect("protocol").clone(),
+            concurrency,
+            timeout_secs,
+            check_url: matches.get_one::<String>("check-url").expect("check-url").clone(),
+        })
+        .await;
+    }
+
+    let proxyip = matches
+        .get_one::<String>("proxyip")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --proxyip"))?
+        .clone();
     let proxyipstr: &str = string_to_static_str(proxyip);
 
-    let proxyport = matches.get_one::<String>("proxyport").expect("proxyport").clone();
-    let proxyportint = proxyport.parse::<u16>().unwrap();
+    let proxyport = matches
+        .get_one::<String>("proxyport")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --proxyport"))?
+        .clone();
+    let proxyportint = proxyport
+        .parse::<u16>()
+        .map_err(|err| anyhow!("invalid --proxyport: {err}"))?;
 
-    let serverip = matches.get_one::<String>("serverip").expect("serverip").clone();
+    let serverip = matches
+        .get_one::<String>("serverip")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --serverip"))?
+        .clone();
     let serveripstr: &str = string_to_static_str(serverip);
 
     let serverport = matches.get_one::<String>("serverport").expect("serverport").clone();
-    let serverportint = serverport.parse::<u16>().unwrap();
+    let serverportint = serverport
+        .parse::<u16>()
+        .map_err(|err| anyhow!("invalid --serverport: {err}"))?;
 
     let authinfo = matches.get_one::<String>("auth").expect("auth").clone();
     init_auth(&authinfo);
@@ -821,7 +939,10 @@ async fn main() -> Result<()> {
     if debug {
         DEBUG_OPEN.store(true, std::sync::atomic::Ordering::SeqCst);
     }
-    let casename = matches.get_one::<String>("casename").expect("casename").clone();
+    let casename = matches
+        .get_one::<String>("casename")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --casename"))?
+        .clone();
 
     let casenamestr: &str = string_to_static_str(casename);
 
