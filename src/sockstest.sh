@@ -52,15 +52,15 @@ eval_cmd()
    echo "$@"
    eval $@
 }
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_connect $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect_hostname $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect_hostname $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_bind $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_bind $datasize $debug
-eval_cmd ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_udp $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_connect $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect_hostname $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect_hostname $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_bind $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_bind $datasize $debug
+eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_udp $datasize $debug
 if [ ! -z $auth ]
 then
-    ./sockstest --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_auth_connect --auth $auth $datasize $debug
+    ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_auth_connect --auth $auth $datasize $debug
 fi

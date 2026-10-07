@@ -1,6 +1,6 @@
 ## Overview
 
-`sockstest` is a Rust-based SOCKS proxy testing tool designed to validate the functionality of SOCKS4, SOCKS4a, and SOCKS5 proxies.
+`proxy-socks-test` is a Rust-based SOCKS proxy testing tool designed to validate the functionality of SOCKS4, SOCKS4a, and SOCKS5 proxies.
 
 ## Features
 
@@ -50,7 +50,7 @@
 ### Example
 
 ```sh
-sockstest --proxyip 127.0.0.1 --proxyport 1080 --serverip 127.0.0.1 --serverport 3307 --casename socks5_connect --debug
+proxy-socks-test --proxyip 127.0.0.1 --proxyport 1080 --serverip 127.0.0.1 --serverport 3307 --casename socks5_connect --debug
 ```
 
 ## Test Cases
@@ -100,10 +100,10 @@ sockstest --proxyip 127.0.0.1 --proxyport 1080 --serverip 127.0.0.1 --serverport
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/sujiacong/sockstest/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/oxychain-dev/proxy-socks-test/blob/main/LICENSE) file for details.
 
 ## Repository
 
-The source code is available on [GitHub](https://github.com/sujiacong/sockstest).
+The source code is available on [GitHub](https://github.com/oxychain-dev/proxy-socks-test).
 
 * * *

@@ -1,13 +1,13 @@
 [package]
-name = "sockstest"
+name = "proxy-socks-test"
 version = "0.1.3"
 edition = "2021"
-authors = ["sujiacong <linfengfeiye@qq.com>"]
+authors = ["oxychain-dev <linfengfeiye@qq.com>"]
 description = "SOCKS proxy test tool"
 readme = "README.md"
 license = "MIT"
 keywords = ["socks", "rust", "test"]
-repository = "https://github.com/sujiacong/sockstest"
+repository = "https://github.com/oxychain-dev/proxy-socks-test"
 
 [dependencies]
 libsocks_client = "0.1.4"
