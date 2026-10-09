@@ -28,6 +28,13 @@ cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 ```
 
+For batch/network changes, build the binary and run the controlled local smoke fixture:
+
+```sh
+cargo build
+python3 tests/batch_smoke.py target/debug/proxy-socks-test
+```
+
 For batch/network behavior changes, also inspect the generated TSV contract and exercise the relevant input/parser path when a suitable test fixture is available.
 
 ## Repository Conventions
