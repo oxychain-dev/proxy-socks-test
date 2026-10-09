@@ -1,4 +1,7 @@
-use super::{BatchOptions, BatchResult, ProbeMetrics, ProxyProtocol, ProxySpec};
+use super::{
+    interface::{bind_client_builder, InterfaceTarget},
+    BatchOptions, BatchResult, ProbeMetrics, ProxyProtocol, ProxySpec,
+};
 use anyhow::{anyhow, Result};
 use reqwest::{Client, Proxy};
 use std::{
@@ -7,18 +10,25 @@ use std::{
 };
 use tokio::{net::lookup_host, time::timeout};
 
-pub(super) async fn detect_tester_ip(options: &BatchOptions) -> Result<IpAddr> {
-    let client = Client::builder()
+pub(super) async fn detect_tester_ip(
+    options: &BatchOptions,
+    target: &InterfaceTarget,
+) -> Result<IpAddr> {
+    let builder = Client::builder()
         .no_proxy()
-        .user_agent("proxy-socks-test/0.2")
-        .timeout(Duration::from_secs(options.timeout_secs))
-        .build()?;
+        .user_agent(concat!("proxy-socks-test/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(options.timeout_secs));
+    let client = bind_client_builder(builder, target)?.build()?;
     let response = client.get(&options.check_url).send().await?.error_for_status()?;
     let body = response.text().await?;
     parse_exit_ip(&body)
 }
 
-pub(super) async fn validate_proxy(proxy: ProxySpec, options: &BatchOptions) -> BatchResult {
+pub(super) async fn validate_proxy(
+    proxy: ProxySpec,
+    options: &BatchOptions,
+    target: &InterfaceTarget,
+) -> BatchResult {
     let tested_ip = match resolve_first_ip(&proxy.host, proxy.port, options.timeout_secs).await {
         Ok(ip) => ip,
         Err(err) => {
@@ -43,7 +53,7 @@ pub(super) async fn validate_proxy(proxy: ProxySpec, options: &BatchOptions) -> 
 
     let mut errors = Vec::new();
     for protocol in protocols {
-        match probe_proxy(&proxy, tested_ip, *protocol, options).await {
+        match probe_proxy(&proxy, tested_ip, *protocol, options, target).await {
             Ok(metrics) => {
                 return BatchResult {
                     proxy,
@@ -65,15 +75,19 @@ pub(super) async fn validate_proxy(proxy: ProxySpec, options: &BatchOptions) -> 
 }
 
 async fn probe_proxy(
-    proxy: &ProxySpec, tested_ip: IpAddr, protocol: ProxyProtocol, options: &BatchOptions,
+    proxy: &ProxySpec,
+    tested_ip: IpAddr,
+    protocol: ProxyProtocol,
+    options: &BatchOptions,
+    target: &InterfaceTarget,
 ) -> Result<ProbeMetrics> {
     let proxy_url = proxy.proxy_url(protocol, tested_ip)?;
     let proxy_rule = Proxy::all(proxy_url.as_str())?;
-    let client = Client::builder()
+    let builder = Client::builder()
         .proxy(proxy_rule)
-        .user_agent("proxy-socks-test/0.2")
-        .timeout(Duration::from_secs(options.timeout_secs))
-        .build()?;
+        .user_agent(concat!("proxy-socks-test/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(options.timeout_secs));
+    let client = bind_client_builder(builder, target)?.build()?;
 
     let started = Instant::now();
     let response = client.get(&options.check_url).send().await?.error_for_status()?;
