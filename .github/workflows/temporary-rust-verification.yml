@@ -28,6 +28,176 @@ jobs:
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Batch SOCKS5 smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --quiet
+
+          fixture=/tmp/proxy-socks-test-fixture
+          mkdir -p "$fixture"
+          cat > "$fixture/socks5.py" <<'PY'
+          import asyncio
+          import ipaddress
+          import struct
+
+          async def pipe(reader, writer):
+              try:
+                  while True:
+                      data = await reader.read(65536)
+                      if not data:
+                          break
+                      writer.write(data)
+                      await writer.drain()
+              except (ConnectionError, asyncio.CancelledError):
+                  pass
+              finally:
+                  try:
+                      writer.close()
+                      await writer.wait_closed()
+                  except Exception:
+                      pass
+
+          async def handle(reader, writer):
+              remote_writer = None
+              try:
+                  ver, nmethods = await reader.readexactly(2)
+                  if ver != 5:
+                      raise ValueError("not SOCKS5")
+                  methods = await reader.readexactly(nmethods)
+                  if 0 not in methods:
+                      writer.write(b"\x05\xff")
+                      await writer.drain()
+                      return
+                  writer.write(b"\x05\x00")
+                  await writer.drain()
+
+                  ver, cmd, _rsv, atyp = await reader.readexactly(4)
+                  if ver != 5 or cmd != 1:
+                      raise ValueError("unsupported command")
+
+                  if atyp == 1:
+                      host = str(ipaddress.IPv4Address(await reader.readexactly(4)))
+                  elif atyp == 3:
+                      length = (await reader.readexactly(1))[0]
+                      host = (await reader.readexactly(length)).decode("idna")
+                  elif atyp == 4:
+                      host = str(ipaddress.IPv6Address(await reader.readexactly(16)))
+                  else:
+                      raise ValueError("unsupported address type")
+
+                  port = struct.unpack("!H", await reader.readexactly(2))[0]
+                  remote_reader, remote_writer = await asyncio.open_connection(host, port)
+
+                  writer.write(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+                  await writer.drain()
+                  await asyncio.gather(
+                      pipe(reader, remote_writer),
+                      pipe(remote_reader, writer),
+                  )
+              except Exception:
+                  try:
+                      writer.write(b"\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00")
+                      await writer.drain()
+                  except Exception:
+                      pass
+              finally:
+                  if remote_writer is not None:
+                      try:
+                          remote_writer.close()
+                      except Exception:
+                          pass
+                  try:
+                      writer.close()
+                      await writer.wait_closed()
+                  except Exception:
+                      pass
+
+          async def main():
+              server = await asyncio.start_server(handle, "127.0.0.1", 19080)
+              async with server:
+                  await server.serve_forever()
+
+          asyncio.run(main())
+          PY
+
+          printf '%s\n' 'socks5://127.0.0.1:19080' > "$fixture/proxies.txt"
+          printf '%s\n' 'http://127.0.0.1:18080/proxies.txt' > "$fixture/sources.txt"
+
+          python3 "$fixture/socks5.py" &
+          socks_pid=$!
+          python3 -m http.server 18080 --bind 127.0.0.1 --directory "$fixture" >/tmp/proxy-list-http.log 2>&1 &
+          http_pid=$!
+          trap 'kill "$socks_pid" "$http_pid" 2>/dev/null || true' EXIT
+
+          python3 - <<'PY'
+          import socket
+          import time
+
+          for port in (18080, 19080):
+              deadline = time.time() + 5
+              while True:
+                  try:
+                      with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                          break
+                  except OSError:
+                      if time.time() >= deadline:
+                          raise
+                      time.sleep(0.05)
+          PY
+
+          ./target/debug/proxy-socks-test \
+            --proxy-file "$fixture/proxies.txt" \
+            --check-url https://api.ipify.org \
+            --timeout 15 \
+            --concurrency 2 \
+            --output "$fixture/local.tsv" \
+            --valid-output "$fixture/local-valid.txt"
+
+          ./target/debug/proxy-socks-test \
+            --source-url http://127.0.0.1:18080/proxies.txt \
+            --check-url https://api.ipify.org \
+            --timeout 15 \
+            --concurrency 2 \
+            --output "$fixture/direct-url.tsv"
+
+          ./target/debug/proxy-socks-test \
+            --source-list http://127.0.0.1:18080/sources.txt \
+            --check-url https://api.ipify.org \
+            --timeout 15 \
+            --concurrency 2 \
+            --output "$fixture/source-list.tsv"
+
+          python3 - "$fixture" <<'PY'
+          import csv
+          import ipaddress
+          import pathlib
+          import sys
+
+          fixture = pathlib.Path(sys.argv[1])
+          expected = [
+              "source", "input", "tester_ip", "protocol", "proxy_host",
+              "tested_ip", "proxy_port", "valid", "latency_ms", "exit_ip", "error",
+          ]
+
+          for name in ("local.tsv", "direct-url.tsv", "source-list.tsv"):
+              with (fixture / name).open(newline="") as fh:
+                  rows = list(csv.DictReader(fh, delimiter="\t"))
+              assert rows, f"{name}: missing data row"
+              assert list(rows[0].keys()) == expected, f"{name}: unexpected header"
+              row = rows[0]
+              assert row["valid"] == "true", f"{name}: proxy was not valid: {row}"
+              assert row["protocol"] == "socks5", f"{name}: wrong protocol"
+              assert row["proxy_host"] == "127.0.0.1", f"{name}: wrong host"
+              assert row["tested_ip"] == "127.0.0.1", f"{name}: wrong tested_ip"
+              assert row["proxy_port"] == "19080", f"{name}: wrong port"
+              assert row["latency_ms"].isdigit(), f"{name}: missing latency"
+              ipaddress.ip_address(row["tester_ip"])
+              ipaddress.ip_address(row["exit_ip"])
+
+          valid = (fixture / "local-valid.txt").read_text().strip().splitlines()
+          assert valid == ["socks5://127.0.0.1:19080"], valid
+          PY
       - name: Diff sanity
         run: git diff --check
       - name: Commit rustfmt changes
