@@ -220,10 +220,13 @@ def assert_row(
     *,
     protocol: str,
     proxy_port: int,
+    interface: str = "default",
 ) -> None:
     expected_columns = [
         "source",
         "input",
+        "interface",
+        "local_ips",
         "tester_ip",
         "protocol",
         "proxy_host",
@@ -235,6 +238,13 @@ def assert_row(
         "error",
     ]
     assert list(row.keys()) == expected_columns, row
+    assert row["interface"] == interface, row
+    if interface == "default":
+        assert row["local_ips"] == "", row
+    else:
+        local_ips = [ipaddress.ip_address(value) for value in row["local_ips"].split(",")]
+        assert local_ips, row
+        assert all(ip.is_loopback for ip in local_ips), row
     assert row["protocol"] == protocol, row
     assert row["proxy_host"] == LOOPBACK_IP, row
     assert row["tested_ip"] == LOOPBACK_IP, row
@@ -246,10 +256,21 @@ def assert_row(
     assert ipaddress.ip_address(row["exit_ip"]).is_loopback, row
 
 
-def assert_single_row(path: Path, *, protocol: str, proxy_port: int) -> None:
+def assert_single_row(
+    path: Path,
+    *,
+    protocol: str,
+    proxy_port: int,
+    interface: str = "default",
+) -> None:
     rows = read_tsv(path)
     assert len(rows) == 1, rows
-    assert_row(rows[0], protocol=protocol, proxy_port=proxy_port)
+    assert_row(
+        rows[0],
+        protocol=protocol,
+        proxy_port=proxy_port,
+        interface=interface,
+    )
 
 
 def build_common_args(binary: Path, check_url: str, output: Path) -> list[str]:
@@ -263,6 +284,8 @@ def build_common_args(binary: Path, check_url: str, output: Path) -> list[str]:
         "4",
         "--output",
         str(output),
+        "--database",
+        ":memory:",
     ]
 
 
@@ -294,12 +317,13 @@ def run_smoke(binary: Path) -> None:
             socks4_tsv = temp / "socks4.tsv"
             run_checked(
                 build_common_args(binary, ip_check_v4, socks4_tsv)
-                + ["--proxy-file", str(local_proxy_file)]
+                + ["--proxy-file", str(local_proxy_file), "--interface", "lo"]
             )
             assert_single_row(
                 socks4_tsv,
                 protocol="socks4",
                 proxy_port=socks4_port,
+                interface="lo",
             )
 
             socks4a_tsv = temp / "socks4a.tsv"
