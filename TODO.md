@@ -6,8 +6,8 @@
 
 ## Current Focus
 
-* [x] **Phase 1 / v0.2.0 — secure interface-aware validation + SQLite foundation**
-  * [~] Close current correctness/security defects before extending the probe engine.
+* [~] **Phase 3 / v0.4.0 — subscriptions, recurring tests, and service mode**
+  * [~] Build subscription CRUD, conditional source refresh, scheduler/service lifecycle, and retention controls.
 
 ## Next
 
@@ -46,33 +46,33 @@
 
 #### Phase 2 / v0.3.0 — Staged diagnostic and performance pipeline
 
-* [~] Implement staged validation profiles so cheap checks gate expensive checks.
-  * [ ] Stage 0: parse/deduplicate/source attribution.
-  * [ ] Stage 1: resolve proxy host and retain every A/AAAA result plus selected tested IP.
-  * [ ] Stage 2: endpoint reachability/connect timing.
-  * [ ] Stage 3: SOCKS protocol/authentication + proxied HTTP validation + exit IP.
-  * [ ] Stage 4: repeated latency/jitter samples and basic HTTP timing.
-  * [ ] Stage 5: download throughput benchmark with configurable byte budget/URL.
-  * [ ] Stage 6: upload throughput benchmark with configurable byte budget/URL.
-  * [ ] Profiles: `basic`, `standard`, `full`, with explicit stage cutoffs.
-  * [ ] Do not run expensive speed stages for proxies that fail earlier stages.
-  * **Verify:** deterministic local fixtures cover stage gating and metric calculations.
+* [x] Implement staged validation profiles so cheap checks gate expensive checks.
+  * [x] Stage 0: parse/deduplicate/source attribution.
+  * [x] Stage 1: resolve proxy host and retain every A/AAAA result plus selected tested IP.
+  * [x] Stage 2: endpoint reachability/connect timing.
+  * [x] Stage 3: SOCKS protocol/authentication + proxied HTTP validation + exit IP.
+  * [x] Stage 4: repeated latency/jitter samples and basic HTTP timing.
+  * [x] Stage 5: download throughput benchmark with configurable byte budget/URL.
+  * [x] Stage 6: upload throughput benchmark with configurable byte budget/URL.
+  * [x] Profiles: `basic`, `standard`, `full`, with explicit stage cutoffs.
+  * [x] Do not run expensive speed stages for proxies that fail earlier stages.
+  * **Verify:** GitHub Actions run 37921774924 passed unit tests plus controlled Stage 0–6 SOCKS4/SOCKS4a/SOCKS5 smoke with bounded download/upload.
 
-* [ ] Add endpoint/domain/IP intelligence.
-  * [ ] Preserve original hostname and all resolved IPs when the proxy input is a domain.
-  * [ ] Add reverse-DNS lookup when available.
-  * [ ] Capture tester IP, proxy endpoint IP, and proxy exit IP distinctly.
-  * [ ] Add optional provider-neutral IP-enrichment URL template with cached raw JSON + normalized common fields when present.
-  * [ ] Never make third-party enrichment mandatory for validity.
-  * **Verify:** local JSON fixture + DNS/IP unit tests; failures degrade to nullable metadata without invalidating an otherwise valid proxy.
+* [x] Add endpoint/domain/IP intelligence.
+  * [x] Preserve original hostname and all resolved IPs when the proxy input is a domain.
+  * [x] Add reverse-DNS lookup when available.
+  * [x] Capture tester IP, proxy endpoint IP, and proxy exit IP distinctly.
+  * [x] Add optional provider-neutral IP-enrichment URL template with cached raw JSON + normalized common fields when present.
+  * [x] Never make third-party enrichment mandatory for validity.
+  * **Verify:** GitHub Actions run 37921774924 passed DNS/address-family/IP-metadata unit coverage and local JSON enrichment smoke.
 
-* [ ] Add professional per-run summaries.
-  * [ ] Counts by interface/protocol/stage/failure reason.
-  * [ ] p50/p95 latency and jitter where enough samples exist.
-  * [ ] download/upload Mbps summaries.
-  * [ ] exit-IP uniqueness/change indicators.
-  * [ ] clear machine-readable stage status/error fields.
-  * **Verify:** summary tests against a seeded SQLite fixture.
+* [x] Add professional per-run summaries.
+  * [x] Counts by interface/protocol/stage/failure reason.
+  * [x] p50/p95 latency and jitter where enough samples exist.
+  * [x] download/upload Mbps summaries.
+  * [x] exit-IP uniqueness/change indicators.
+  * [x] clear machine-readable stage status/error fields.
+  * **Verify:** GitHub Actions run 37921774924 passed deterministic professional-summary and SQLite v2 persistence tests.
 
 ### P1 — Important
 
