@@ -233,6 +233,10 @@ impl Store {
         Ok(())
     }
 
+    pub(super) fn into_connection(self) -> Connection {
+        self.conn
+    }
+
     pub(super) fn start_run(
         &self, options: &BatchOptions, proxy_count: usize, interface_count: usize,
     ) -> Result<i64> {
