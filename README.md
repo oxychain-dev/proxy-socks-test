@@ -101,6 +101,17 @@ The TSV contains:
 - `latency_ms` is the end-to-end time for the validation request.
 - `valid-output`, when supplied, receives only successful proxies in normalized SOCKS URL form.
 
+### Controlled Batch Smoke Test
+
+A self-contained local fixture verifies SOCKS4, SOCKS4a, SOCKS5, local proxy-file ingestion, direct proxy-list URLs, source-list URLs, TSV fields, and normalized valid-proxy output:
+
+```sh
+cargo build
+python3 tests/batch_smoke.py target/debug/proxy-socks-test
+```
+
+The fixture uses only the Python standard library and local loopback services.
+
 ## Test Cases
 
 ### TCP Connect
