@@ -38,7 +38,7 @@ jobs:
         run: git diff --check
       - name: Commit Cargo.lock
         run: |
-          if git diff --quiet -- Cargo.lock; then
+          if [[ -z "$(git status --porcelain -- Cargo.lock)" ]]; then
             echo "Cargo.lock is already up to date."
             exit 0
           fi
