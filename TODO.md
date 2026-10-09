@@ -5,7 +5,7 @@
 
 ## Current Focus
 
-* [x] Controlled SOCKS4/SOCKS4a/SOCKS5 end-to-end batch fixtures are implemented and verified.
+* [~] Replace the deprecated rustfmt `fn_args_layout` key without changing formatting behavior.
 
 ## Next
 
@@ -22,7 +22,7 @@
 
 ### P2 — Normal / Cleanup
 
-* [ ] Review the deprecated `fn_args_layout` rustfmt setting separately from feature work.
+* [~] Review the deprecated `fn_args_layout` rustfmt setting separately from feature work.
   * **Verify:** Any replacement preserves the repository's compressed function-parameter formatting and standard checks remain green.
 
 ## Blocked
