@@ -15,12 +15,12 @@
 
 #### Phase 1 / v0.2.0 — Secure interface-aware validator + persistent database
 
-* [~] Fix correctness and secret-handling defects already identified in PR review.
-  * [ ] Redact proxy credentials from TSV/report-safe input fields while preserving authentication for actual probing.
-  * [ ] Normalize bracketed IPv6 literals so endpoint resolution/probing works.
-  * [ ] Reject equivalent/colliding output paths before opening writers.
-  * [ ] Add regression tests for all three defects.
-  * **Verify:** fmt/check/test/clippy + controlled smoke test; no credentials in TSV/log assertions.
+* [x] Fix correctness and secret-handling defects already identified in PR review.
+  * [x] Redact proxy credentials from TSV/report-safe input fields while preserving authentication for actual probing.
+  * [x] Normalize bracketed IPv6 literals so endpoint resolution/probing works.
+  * [x] Reject equivalent/colliding output paths before opening writers.
+  * [x] Add regression tests for all three defects.
+  * **Verify:** GitHub Actions run 37919598208 passed fmt/check/test/clippy/build, controlled SOCKS smoke, and diff validation.
 
 * [ ] Add explicit network-interface selection.
   * [ ] `--interface <name>` repeatable for one or more selected interfaces.
