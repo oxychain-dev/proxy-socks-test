@@ -26,7 +26,10 @@ pub struct BatchOptions {
     pub proxy_files: Vec<String>,
     pub source_lists: Vec<String>,
     pub source_urls: Vec<String>,
+    pub inline_proxy_sources: Vec<(String, String)>,
+    pub inline_source_lists: Vec<(String, String)>,
     pub output: String,
+    pub write_tsv: bool,
     pub valid_output: Option<String>,
     pub database: String,
     pub interfaces: Vec<String>,
@@ -42,6 +45,7 @@ pub struct BatchOptions {
     pub download_bytes: u64,
     pub upload_bytes: u64,
     pub ip_info_url_template: Option<String>,
+    pub subscription_id: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -368,15 +372,20 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         load_stats.source_errors
     );
 
-    let output_file = fs::File::create(&options.output)
-        .await
-        .with_context(|| format!("failed to create TSV output {}", options.output))?;
-    let mut output = BufWriter::new(output_file);
-    output
-        .write_all(
-            b"source\tinput\tinterface\tlocal_ips\ttester_ip\tproxy_host\tresolved_ips\ttested_ip\treverse_dns\tproxy_port\tvalid\tprotocol\ttcp_connect_ms\tvalidation_latency_ms\tlatency_p50_ms\tlatency_p95_ms\tjitter_ms\tdownload_mbps\tupload_mbps\texit_ip\texit_ip_changed\tendpoint_country\tendpoint_asn\tendpoint_org\texit_country\texit_asn\texit_org\tstages\terror\n",
-        )
-        .await?;
+    let mut output = if options.write_tsv {
+        let output_file = fs::File::create(&options.output)
+            .await
+            .with_context(|| format!("failed to create TSV output {}", options.output))?;
+        let mut output = BufWriter::new(output_file);
+        output
+            .write_all(
+                b"source\tinput\tinterface\tlocal_ips\ttester_ip\tproxy_host\tresolved_ips\ttested_ip\treverse_dns\tproxy_port\tvalid\tprotocol\ttcp_connect_ms\tvalidation_latency_ms\tlatency_p50_ms\tlatency_p95_ms\tjitter_ms\tdownload_mbps\tupload_mbps\texit_ip\texit_ip_changed\tendpoint_country\tendpoint_asn\tendpoint_org\texit_country\texit_asn\texit_org\tstages\terror\n",
+            )
+            .await?;
+        Some(output)
+    } else {
+        None
+    };
 
     let mut valid_output = if let Some(path) = &options.valid_output {
         Some(BufWriter::new(
@@ -452,7 +461,9 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
             store.insert_result(interface_run_id, &result)?;
             interface_summary.observe(&result);
             overall_summary.observe(&result);
-            output.write_all(result.tsv_row(&target, tester_ip).as_bytes()).await?;
+            if let Some(writer) = output.as_mut() {
+                writer.write_all(result.tsv_row(&target, tester_ip).as_bytes()).await?;
+            }
 
             if tested.is_multiple_of(100) || tested == total_checks {
                 println!("progress: {tested}/{total_checks}, valid checks: {valid}");
@@ -476,7 +487,9 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         interface_summary.print(&format!("interface={}", target.label()));
     }
 
-    output.flush().await?;
+    if let Some(writer) = output.as_mut() {
+        writer.flush().await?;
+    }
     if let Some(writer) = valid_output.as_mut() {
         writer.flush().await?;
     }
@@ -485,7 +498,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     println!(
         "batch complete: tested={tested}, valid={valid}, invalid={}, tsv={}, sqlite={}",
         tested.saturating_sub(valid),
-        shared.output,
+        if shared.write_tsv { shared.output.as_str() } else { "disabled" },
         shared.database
     );
     overall_summary.print("overall");
@@ -496,6 +509,8 @@ fn validate_options(options: &BatchOptions) -> Result<()> {
     if options.proxy_files.is_empty()
         && options.source_lists.is_empty()
         && options.source_urls.is_empty()
+        && options.inline_proxy_sources.is_empty()
+        && options.inline_source_lists.is_empty()
     {
         return Err(anyhow!("batch mode requires --proxy-file, --source-list, or --source-url"));
     }
@@ -528,7 +543,7 @@ fn validate_options(options: &BatchOptions) -> Result<()> {
     )?;
     validate_http_url(&options.upload_url, "--upload-url")?;
     ensure_distinct_artifact_paths(
-        &options.output,
+        options.write_tsv.then_some(options.output.as_str()),
         options.valid_output.as_deref(),
         &options.database,
     )
@@ -550,12 +565,14 @@ fn redact_source(value: &str) -> String {
 }
 
 fn ensure_distinct_artifact_paths(
-    output: &str, valid_output: Option<&str>, database: &str,
+    output: Option<&str>,
+    valid_output: Option<&str>,
+    database: &str,
 ) -> Result<()> {
-    let mut artifacts = vec![
-        ("--output", normalized_output_path(output)?),
-        ("--database", normalized_output_path(database)?),
-    ];
+    let mut artifacts = vec![("--database", normalized_output_path(database)?)];
+    if let Some(output) = output {
+        artifacts.push(("--output", normalized_output_path(output)?));
+    }
     if let Some(valid_output) = valid_output {
         artifacts.push(("--valid-output", normalized_output_path(valid_output)?));
     }
@@ -681,7 +698,7 @@ mod tests {
     #[test]
     fn rejects_equivalent_output_paths() {
         let err = ensure_distinct_artifact_paths(
-            "proxy-results.tsv",
+            Some("proxy-results.tsv"),
             Some("./proxy-results.tsv"),
             "proxy-socks-test.sqlite3",
         )
@@ -691,7 +708,8 @@ mod tests {
 
     #[test]
     fn rejects_database_output_collision() {
-        let err = ensure_distinct_artifact_paths("./results.tsv", None, "results.tsv").unwrap_err();
+        let err =
+            ensure_distinct_artifact_paths(Some("./results.tsv"), None, "results.tsv").unwrap_err();
         assert!(err.to_string().contains("--output"));
         assert!(err.to_string().contains("--database"));
     }
