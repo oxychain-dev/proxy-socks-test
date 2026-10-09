@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use model::{BatchResult, IpMetadata, ProbeMetrics, StageResult, TestProfile};
 use reqwest::{Client, Url};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env, fmt,
     net::IpAddr,
     path::{Component, Path, PathBuf},
@@ -233,6 +233,116 @@ impl BatchResult {
 }
 
 
+#[derive(Default)]
+struct SummaryAccumulator {
+    tested: usize,
+    valid: usize,
+    protocol_counts: BTreeMap<String, usize>,
+    stage_status_counts: BTreeMap<String, usize>,
+    failure_stage_counts: BTreeMap<&'static str, usize>,
+    latency_samples_ms: Vec<f64>,
+    jitters_ms: Vec<f64>,
+    download_mbps: Vec<f64>,
+    upload_mbps: Vec<f64>,
+    exit_ips: HashSet<IpAddr>,
+    exit_ip_changed_checks: usize,
+}
+
+impl SummaryAccumulator {
+    fn observe(&mut self, result: &BatchResult) {
+        self.tested += 1;
+        for stage in &result.stages {
+            let key = format!("{}:{}:{}", stage.stage, stage.name, stage.status.as_str());
+            *self.stage_status_counts.entry(key).or_default() += 1;
+        }
+        for failure in result.stage_failure_labels() {
+            *self.failure_stage_counts.entry(failure).or_default() += 1;
+        }
+
+        let Some(metrics) = result.metrics.as_ref() else {
+            return;
+        };
+        self.valid += 1;
+        *self.protocol_counts.entry(metrics.protocol.to_string()).or_default() += 1;
+        self.latency_samples_ms
+            .extend(metrics.latency_samples_ms.iter().map(|value| *value as f64));
+        if let Some(jitter) = metrics.jitter_ms {
+            self.jitters_ms.push(jitter);
+        }
+        if let Some(download) = metrics.download_mbps {
+            self.download_mbps.push(download);
+        }
+        if let Some(upload) = metrics.upload_mbps {
+            self.upload_mbps.push(upload);
+        }
+        self.exit_ips.insert(metrics.exit_ip);
+        if metrics.exit_ip_changed {
+            self.exit_ip_changed_checks += 1;
+        }
+    }
+
+    fn print(&self, label: &str) {
+        println!("{}", self.render(label));
+    }
+
+    fn render(&self, label: &str) -> String {
+        let invalid = self.tested.saturating_sub(self.valid);
+        let latency_p50 = summary_percentile(&self.latency_samples_ms, 0.50);
+        let latency_p95 = summary_percentile(&self.latency_samples_ms, 0.95);
+        let jitter_avg = average(&self.jitters_ms);
+        let download_avg = average(&self.download_mbps);
+        let upload_avg = average(&self.upload_mbps);
+        format!(
+            "summary[{label}]: tested={} valid={} invalid={} protocols={} stages={} failures={} latency_p50_ms={} latency_p95_ms={} jitter_avg_ms={} download_avg_mbps={} upload_avg_mbps={} unique_exit_ips={} exit_ip_changed_checks={}",
+            self.tested,
+            self.valid,
+            invalid,
+            format_counts(&self.protocol_counts),
+            format_counts(&self.stage_status_counts),
+            format_counts(&self.failure_stage_counts),
+            format_optional_metric(latency_p50),
+            format_optional_metric(latency_p95),
+            format_optional_metric(jitter_avg),
+            format_optional_metric(download_avg),
+            format_optional_metric(upload_avg),
+            self.exit_ips.len(),
+            self.exit_ip_changed_checks,
+        )
+    }
+}
+
+fn format_counts<K>(counts: &BTreeMap<K, usize>) -> String
+where
+    K: Ord + std::fmt::Display,
+{
+    if counts.is_empty() {
+        return "-".to_owned();
+    }
+    counts
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn summary_percentile(values: &[f64], percentile: f64) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut values = values.to_vec();
+    values.sort_by(f64::total_cmp);
+    let rank = ((values.len() - 1) as f64 * percentile.clamp(0.0, 1.0)).ceil() as usize;
+    values.get(rank).copied()
+}
+
+fn average(values: &[f64]) -> Option<f64> {
+    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
+}
+
+fn format_optional_metric(value: Option<f64>) -> String {
+    value.map(|value| format!("{value:.3}")).unwrap_or_else(|| "-".to_owned())
+}
+
 pub async fn run_batch(options: BatchOptions) -> Result<()> {
     validate_options(&options)?;
 
@@ -297,6 +407,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     let mut valid = 0usize;
     let mut valid_written = HashSet::new();
     let enrichment_cache = validate::new_ip_info_cache();
+    let mut overall_summary = SummaryAccumulator::default();
 
     for target in targets {
         let target = Arc::new(target);
@@ -314,6 +425,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
             }
         };
         let interface_run_id = store.start_interface_run(run_id, &target, tester_ip)?;
+        let mut interface_summary = SummaryAccumulator::default();
 
         let mut iter = proxies.iter().cloned();
         let mut tasks = JoinSet::new();
@@ -349,6 +461,8 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
             }
 
             store.insert_result(interface_run_id, &result)?;
+            interface_summary.observe(&result);
+            overall_summary.observe(&result);
             output.write_all(result.tsv_row(&target, tester_ip).as_bytes()).await?;
 
             if tested.is_multiple_of(100) || tested == total_checks {
@@ -370,6 +484,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
             target.label(),
             interface_tested.saturating_sub(interface_valid)
         );
+        interface_summary.print(&format!("interface={}", target.label()));
     }
 
     output.flush().await?;
@@ -384,6 +499,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         shared.output,
         shared.database
     );
+    overall_summary.print("overall");
     Ok(())
 }
 
@@ -545,7 +661,8 @@ fn tsv_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_distinct_artifact_paths, redact_source, tsv_escape, ProxyProtocol, ProxySpec,
+        ensure_distinct_artifact_paths, redact_source, tsv_escape, ProbeMetrics, ProxyProtocol,
+        ProxySpec, StageResult, SummaryAccumulator,
     };
 
     #[test]
@@ -591,5 +708,65 @@ mod tests {
         let err = ensure_distinct_artifact_paths("./results.tsv", None, "results.tsv").unwrap_err();
         assert!(err.to_string().contains("--output"));
         assert!(err.to_string().contains("--database"));
+    }
+
+    #[test]
+    fn professional_summary_reports_protocol_stage_latency_speed_and_exit_ip() {
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::time::Duration;
+
+        let result = super::BatchResult {
+            proxy: ProxySpec {
+                raw: "127.0.0.1:1080".into(),
+                source: "test".into(),
+                host: "127.0.0.1".into(),
+                port: 1080,
+                username: None,
+                password: None,
+                protocol: ProxyProtocol::Auto,
+            },
+            resolved_ips: vec![IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            tested_ip: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            reverse_dns: None,
+            endpoint_connect_ms: Some(1),
+            endpoint_ip_info: None,
+            metrics: Some(ProbeMetrics {
+                protocol: ProxyProtocol::Socks5,
+                validation_latency_ms: 10,
+                exit_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                latency_samples_ms: vec![10, 20, 30],
+                latency_p50_ms: Some(20.0),
+                latency_p95_ms: Some(30.0),
+                jitter_ms: Some(10.0),
+                download_mbps: Some(50.0),
+                upload_mbps: Some(25.0),
+                exit_ip_changed: true,
+                exit_ip_info: None,
+            }),
+            stages: vec![
+                StageResult::pass(3, "proxy_http_validation", Duration::from_millis(10)),
+                StageResult::fail(
+                    5,
+                    "download_throughput",
+                    Duration::from_millis(1),
+                    "fixture failure",
+                ),
+            ],
+            error: None,
+        };
+
+        let mut summary = SummaryAccumulator::default();
+        summary.observe(&result);
+        let rendered = summary.render("fixture");
+        assert!(rendered.contains("protocols=socks5=1"));
+        assert!(rendered.contains("5:download_throughput:fail=1"));
+        assert!(rendered.contains("failures=download_throughput=1"));
+        assert!(rendered.contains("latency_p50_ms=20.000"));
+        assert!(rendered.contains("latency_p95_ms=30.000"));
+        assert!(rendered.contains("jitter_avg_ms=10.000"));
+        assert!(rendered.contains("download_avg_mbps=50.000"));
+        assert!(rendered.contains("upload_avg_mbps=25.000"));
+        assert!(rendered.contains("unique_exit_ips=1"));
+        assert!(rendered.contains("exit_ip_changed_checks=1"));
     }
 }
