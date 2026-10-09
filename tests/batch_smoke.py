@@ -19,6 +19,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 
 LOOPBACK_IP = "127.0.0.1"
@@ -149,6 +150,31 @@ class FixtureHttpHandler(BaseHTTPRequestHandler):
     http_port = 0
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        parsed = urlsplit(self.path)
+        if parsed.path == "/download":
+            requested = int(parse_qs(parsed.query).get("bytes", ["0"])[0])
+            payload = b"x" * min(requested, 1024 * 1024)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        if parsed.path.startswith("/ip-info/"):
+            ip_value = parsed.path.removeprefix("/ip-info/")
+            payload = (
+                '{"ip":"'
+                + ip_value
+                + '","country":"LOOP","city":"Local","org":"FixtureNet","asn":"AS0"}'
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         routes = {
             "/ip": f"{LOOPBACK_IP}\n",
             "/socks4.txt": f"socks4://{LOOPBACK_IP}:{self.socks4_port}\n",
@@ -156,7 +182,7 @@ class FixtureHttpHandler(BaseHTTPRequestHandler):
             "/socks5.txt": f"{LOOPBACK_IP}:{self.socks5_port}\n",
             "/sources.txt": f"http://{LOOPBACK_IP}:{self.http_port}/socks5.txt\n",
         }
-        body = routes.get(self.path)
+        body = routes.get(parsed.path)
         if body is None:
             self.send_error(404)
             return
@@ -167,6 +193,19 @@ class FixtureHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if urlsplit(self.path).path != "/upload":
+            self.send_error(404)
+            return
+        content_length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(content_length)
+        response = str(len(body)).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(response)))
+        self.end_headers()
+        self.wfile.write(response)
 
     def log_message(self, _format: str, *args: object) -> None:
         del args
@@ -221,6 +260,8 @@ def assert_row(
     protocol: str,
     proxy_port: int,
     interface: str = "default",
+    full_profile: bool = False,
+    enriched: bool = False,
 ) -> None:
     expected_columns = [
         "source",
@@ -228,13 +269,29 @@ def assert_row(
         "interface",
         "local_ips",
         "tester_ip",
-        "protocol",
         "proxy_host",
+        "resolved_ips",
         "tested_ip",
+        "reverse_dns",
         "proxy_port",
         "valid",
-        "latency_ms",
+        "protocol",
+        "tcp_connect_ms",
+        "validation_latency_ms",
+        "latency_p50_ms",
+        "latency_p95_ms",
+        "jitter_ms",
+        "download_mbps",
+        "upload_mbps",
         "exit_ip",
+        "exit_ip_changed",
+        "endpoint_country",
+        "endpoint_asn",
+        "endpoint_org",
+        "exit_country",
+        "exit_asn",
+        "exit_org",
+        "stages",
         "error",
     ]
     assert list(row.keys()) == expected_columns, row
@@ -247,13 +304,35 @@ def assert_row(
         assert all(ip.is_loopback for ip in local_ips), row
     assert row["protocol"] == protocol, row
     assert row["proxy_host"] == LOOPBACK_IP, row
+    assert LOOPBACK_IP in row["resolved_ips"].split(","), row
     assert row["tested_ip"] == LOOPBACK_IP, row
     assert row["proxy_port"] == str(proxy_port), row
     assert row["valid"] == "true", row
-    assert row["latency_ms"].isdigit(), row
+    assert row["tcp_connect_ms"].isdigit(), row
+    assert row["validation_latency_ms"].isdigit(), row
+    assert float(row["latency_p50_ms"]) >= 0, row
+    assert float(row["latency_p95_ms"]) >= 0, row
+    assert float(row["jitter_ms"]) >= 0, row
+    assert row["exit_ip_changed"] == "false", row
     assert row["error"] == "", row
+    assert "3:proxy_http_validation=pass" in row["stages"], row
     assert ipaddress.ip_address(row["tester_ip"]).is_loopback, row
     assert ipaddress.ip_address(row["exit_ip"]).is_loopback, row
+    if full_profile:
+        assert float(row["download_mbps"]) > 0, row
+        assert float(row["upload_mbps"]) > 0, row
+        assert "5:download_throughput=pass" in row["stages"], row
+        assert "6:upload_throughput=pass" in row["stages"], row
+    else:
+        assert row["download_mbps"] == "", row
+        assert row["upload_mbps"] == "", row
+    if enriched:
+        assert row["endpoint_country"] == "LOOP", row
+        assert row["endpoint_asn"] == "AS0", row
+        assert row["endpoint_org"] == "FixtureNet", row
+        assert row["exit_country"] == "LOOP", row
+        assert row["exit_asn"] == "AS0", row
+        assert row["exit_org"] == "FixtureNet", row
 
 
 def assert_single_row(
@@ -262,6 +341,8 @@ def assert_single_row(
     protocol: str,
     proxy_port: int,
     interface: str = "default",
+    full_profile: bool = False,
+    enriched: bool = False,
 ) -> None:
     rows = read_tsv(path)
     assert len(rows) == 1, rows
@@ -270,6 +351,8 @@ def assert_single_row(
         protocol=protocol,
         proxy_port=proxy_port,
         interface=interface,
+        full_profile=full_profile,
+        enriched=enriched,
     )
 
 
@@ -349,12 +432,28 @@ def run_smoke(binary: Path) -> None:
                     f"http://{LOOPBACK_IP}:{http_port}/sources.txt",
                     "--valid-output",
                     str(valid_output),
+                    "--profile",
+                    "full",
+                    "--latency-samples",
+                    "3",
+                    "--download-url",
+                    f"http://{LOOPBACK_IP}:{http_port}/download?bytes={{bytes}}",
+                    "--upload-url",
+                    f"http://{LOOPBACK_IP}:{http_port}/upload",
+                    "--download-bytes",
+                    "4096",
+                    "--upload-bytes",
+                    "2048",
+                    "--ip-info-url-template",
+                    f"http://{LOOPBACK_IP}:{http_port}/ip-info/{{ip}}",
                 ]
             )
             assert_single_row(
                 socks5_tsv,
                 protocol="socks5",
                 proxy_port=socks5_port,
+                full_profile=True,
+                enriched=True,
             )
             valid = {
                 line.strip()
