@@ -11,16 +11,12 @@ pub(super) struct Store {
 
 impl Store {
     pub(super) fn open(path: &str) -> Result<Self> {
-        let conn =
-            Connection::open(path).with_context(|| format!("failed to open SQLite database {path}"))?;
+        let conn = Connection::open(path)
+            .with_context(|| format!("failed to open SQLite database {path}"))?;
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", true)?;
-        let _: String = conn.pragma_update_and_check(
-            None,
-            "journal_mode",
-            "WAL",
-            |row| row.get::<_, String>(0),
-        )?;
+        let _: String = conn
+            .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
 
         let mut store = Self { conn };
@@ -30,8 +26,7 @@ impl Store {
     }
 
     fn migrate(&mut self) -> Result<()> {
-        let current: i64 =
-            self.conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let current: i64 = self.conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if current > SCHEMA_VERSION {
             return Err(anyhow!(
                 "database schema version {current} is newer than supported version {SCHEMA_VERSION}"
@@ -111,10 +106,7 @@ impl Store {
     }
 
     pub(super) fn start_run(
-        &self,
-        options: &BatchOptions,
-        proxy_count: usize,
-        interface_count: usize,
+        &self, options: &BatchOptions, proxy_count: usize, interface_count: usize,
     ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO runs(
@@ -134,10 +126,7 @@ impl Store {
     }
 
     pub(super) fn start_interface_run(
-        &self,
-        run_id: i64,
-        target: &InterfaceTarget,
-        tester_ip: Option<std::net::IpAddr>,
+        &self, run_id: i64, target: &InterfaceTarget, tester_ip: Option<std::net::IpAddr>,
     ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO interface_runs(run_id, interface_name, local_ips, tester_ip)
@@ -152,16 +141,9 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub(super) fn insert_result(
-        &self,
-        interface_run_id: i64,
-        result: &BatchResult,
-    ) -> Result<()> {
+    pub(super) fn insert_result(&self, interface_run_id: i64, result: &BatchResult) -> Result<()> {
         let detected_protocol = result.metrics.as_ref().map(|m| m.protocol.to_string());
-        let latency_ms = result
-            .metrics
-            .as_ref()
-            .map(|m| u128_to_i64(m.latency_ms));
+        let latency_ms = result.metrics.as_ref().map(|m| u128_to_i64(m.latency_ms));
         let exit_ip = result.metrics.as_ref().map(|m| m.exit_ip.to_string());
         let valid = i64::from(result.valid());
 
@@ -291,11 +273,9 @@ mod tests {
 
         let (source, input): (String, String) = store
             .conn
-            .query_row(
-                "SELECT source, input_redacted FROM proxy_checks LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
+            .query_row("SELECT source, input_redacted FROM proxy_checks LIMIT 1", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .unwrap();
         assert_eq!(source, "https://example.com/list");
         assert_eq!(input, "socks5://example.com:1080");

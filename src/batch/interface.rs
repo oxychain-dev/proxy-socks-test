@@ -27,8 +27,7 @@ impl InterfaceTarget {
 }
 
 pub(super) fn select_targets(
-    selected: &[String],
-    all_interfaces: bool,
+    selected: &[String], all_interfaces: bool,
 ) -> Result<Vec<InterfaceTarget>> {
     if !selected.is_empty() && all_interfaces {
         return Err(anyhow!("--interface and --all-interfaces cannot be used together"));
@@ -42,9 +41,7 @@ pub(super) fn select_targets(
 }
 
 fn select_targets_from_entries(
-    entries: Vec<(String, IpAddr)>,
-    selected: &[String],
-    all_interfaces: bool,
+    entries: Vec<(String, IpAddr)>, selected: &[String], all_interfaces: bool,
 ) -> Result<Vec<InterfaceTarget>> {
     if selected.is_empty() && !all_interfaces {
         return Ok(vec![InterfaceTarget::default_route()]);
@@ -63,10 +60,8 @@ fn select_targets_from_entries(
             .into_iter()
             .filter_map(|(name, ips)| {
                 let usable: Vec<_> = ips.into_iter().filter(|ip| !ip.is_loopback()).collect();
-                (!usable.is_empty()).then_some(InterfaceTarget {
-                    name: Some(name),
-                    local_ips: usable,
-                })
+                (!usable.is_empty())
+                    .then_some(InterfaceTarget { name: Some(name), local_ips: usable })
             })
             .collect::<Vec<_>>();
         if targets.is_empty() {
@@ -93,8 +88,7 @@ fn select_targets_from_entries(
 }
 
 pub(super) fn bind_client_builder(
-    builder: ClientBuilder,
-    target: &InterfaceTarget,
+    builder: ClientBuilder, target: &InterfaceTarget,
 ) -> Result<ClientBuilder> {
     let Some(name) = target.name.as_deref() else {
         return Ok(builder);
@@ -175,8 +169,7 @@ mod tests {
 
     #[test]
     fn missing_explicit_interface_is_an_error() {
-        let err =
-            select_targets_from_entries(entries(), &["missing0".into()], false).unwrap_err();
+        let err = select_targets_from_entries(entries(), &["missing0".into()], false).unwrap_err();
         assert!(err.to_string().contains("missing0"));
     }
 }

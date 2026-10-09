@@ -11,8 +11,7 @@ use std::{
 use tokio::{net::lookup_host, time::timeout};
 
 pub(super) async fn detect_tester_ip(
-    options: &BatchOptions,
-    target: &InterfaceTarget,
+    options: &BatchOptions, target: &InterfaceTarget,
 ) -> Result<IpAddr> {
     let builder = Client::builder()
         .no_proxy()
@@ -25,9 +24,7 @@ pub(super) async fn detect_tester_ip(
 }
 
 pub(super) async fn validate_proxy(
-    proxy: ProxySpec,
-    options: &BatchOptions,
-    target: &InterfaceTarget,
+    proxy: ProxySpec, options: &BatchOptions, target: &InterfaceTarget,
 ) -> BatchResult {
     let tested_ip = match resolve_first_ip(&proxy.host, proxy.port, options.timeout_secs).await {
         Ok(ip) => ip,
@@ -75,10 +72,7 @@ pub(super) async fn validate_proxy(
 }
 
 async fn probe_proxy(
-    proxy: &ProxySpec,
-    tested_ip: IpAddr,
-    protocol: ProxyProtocol,
-    options: &BatchOptions,
+    proxy: &ProxySpec, tested_ip: IpAddr, protocol: ProxyProtocol, options: &BatchOptions,
     target: &InterfaceTarget,
 ) -> Result<ProbeMetrics> {
     let proxy_url = proxy.proxy_url(protocol, tested_ip)?;

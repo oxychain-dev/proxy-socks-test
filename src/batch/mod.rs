@@ -173,11 +173,7 @@ impl BatchResult {
         self.metrics.is_some()
     }
 
-    fn tsv_row(
-        &self,
-        target: &interface::InterfaceTarget,
-        tester_ip: Option<IpAddr>,
-    ) -> String {
+    fn tsv_row(&self, target: &interface::InterfaceTarget, tester_ip: Option<IpAddr>) -> String {
         let tester_ip = tester_ip.map(|ip| ip.to_string()).unwrap_or_default();
         let protocol = self
             .metrics
@@ -292,12 +288,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         let mut tasks = JoinSet::new();
         for _ in 0..shared.concurrency.min(proxies.len()) {
             if let Some(proxy) = iter.next() {
-                spawn_validation(
-                    &mut tasks,
-                    proxy,
-                    Arc::clone(&shared),
-                    Arc::clone(&target),
-                );
+                spawn_validation(&mut tasks, proxy, Arc::clone(&shared), Arc::clone(&target));
             }
         }
 
@@ -327,12 +318,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
                 println!("progress: {tested}/{total_checks}, valid checks: {valid}");
             }
             if let Some(proxy) = iter.next() {
-                spawn_validation(
-                    &mut tasks,
-                    proxy,
-                    Arc::clone(&shared),
-                    Arc::clone(&target),
-                );
+                spawn_validation(&mut tasks, proxy, Arc::clone(&shared), Arc::clone(&target));
             }
         }
 
@@ -394,9 +380,7 @@ fn redact_source(value: &str) -> String {
 }
 
 fn ensure_distinct_artifact_paths(
-    output: &str,
-    valid_output: Option<&str>,
-    database: &str,
+    output: &str, valid_output: Option<&str>, database: &str,
 ) -> Result<()> {
     let mut artifacts = vec![
         ("--output", normalized_output_path(output)?),
@@ -458,9 +442,7 @@ fn normalized_output_path(value: &str) -> Result<PathBuf> {
 }
 
 fn spawn_validation(
-    tasks: &mut JoinSet<BatchResult>,
-    proxy: ProxySpec,
-    options: Arc<BatchOptions>,
+    tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
     target: Arc<interface::InterfaceTarget>,
 ) {
     tasks.spawn(async move { validate::validate_proxy(proxy, &options, &target).await });
@@ -516,8 +498,7 @@ mod tests {
 
     #[test]
     fn rejects_database_output_collision() {
-        let err =
-            ensure_distinct_artifact_paths("./results.tsv", None, "results.tsv").unwrap_err();
+        let err = ensure_distinct_artifact_paths("./results.tsv", None, "results.tsv").unwrap_err();
         assert!(err.to_string().contains("--output"));
         assert!(err.to_string().contains("--database"));
     }
