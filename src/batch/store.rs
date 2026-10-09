@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{named_params, params, Connection};
 use std::{path::Path, time::Duration};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const V1_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -112,6 +112,63 @@ CREATE INDEX IF NOT EXISTS idx_proxy_checks_tested_ip
 CREATE INDEX IF NOT EXISTS idx_proxy_checks_exit_ip
     ON proxy_checks(exit_ip);
 ";
+const V3_MIGRATION: &str = "
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    source_type TEXT NOT NULL CHECK (source_type IN ('proxy-list', 'source-list')),
+    source_url TEXT NOT NULL,
+    source_display TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    interval_seconds INTEGER NOT NULL CHECK (interval_seconds > 0),
+    interface_names TEXT NOT NULL DEFAULT '',
+    all_interfaces INTEGER NOT NULL DEFAULT 0 CHECK (all_interfaces IN (0, 1)),
+    profile TEXT NOT NULL,
+    concurrency INTEGER NOT NULL,
+    timeout_seconds INTEGER NOT NULL,
+    check_url TEXT NOT NULL,
+    latency_samples INTEGER NOT NULL,
+    download_url TEXT NOT NULL,
+    upload_url TEXT NOT NULL,
+    download_bytes INTEGER NOT NULL,
+    upload_bytes INTEGER NOT NULL,
+    ip_info_url_template TEXT,
+    etag TEXT,
+    last_modified TEXT,
+    cached_payload TEXT,
+    last_fetch_status INTEGER,
+    last_fetch_at INTEGER,
+    last_success_at INTEGER,
+    last_error TEXT,
+    item_count INTEGER NOT NULL DEFAULT 0,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    next_run_at INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE runs ADD COLUMN subscription_id INTEGER
+    REFERENCES subscriptions(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS subscription_runs (
+    id INTEGER PRIMARY KEY,
+    subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    run_id INTEGER REFERENCES runs(id) ON DELETE CASCADE,
+    fetched_at INTEGER NOT NULL,
+    http_status INTEGER,
+    not_modified INTEGER NOT NULL DEFAULT 0 CHECK (not_modified IN (0, 1)),
+    item_count INTEGER,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_due
+    ON subscriptions(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_runs_subscription
+    ON runs(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_subscription_runs_subscription
+    ON subscription_runs(subscription_id, fetched_at);
+";
+
 
 pub(super) struct Store {
     conn: Connection,
@@ -158,6 +215,19 @@ impl Store {
             )?;
             tx.pragma_update(None, "user_version", 2)?;
             tx.commit()?;
+            current = 2;
+        }
+
+        if current < 3 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(V3_MIGRATION)?;
+            tx.execute(
+                "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '3')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )?;
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
         }
 
         Ok(())
@@ -170,8 +240,8 @@ impl Store {
             "INSERT INTO runs(
                 check_url, requested_protocol, concurrency, timeout_seconds,
                 proxy_count, interface_count, profile, latency_samples,
-                download_url, upload_url, download_bytes, upload_bytes
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                download_url, upload_url, download_bytes, upload_bytes, subscription_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 options.check_url,
                 options.default_protocol,
@@ -185,6 +255,7 @@ impl Store {
                 options.upload_url,
                 u64_to_i64(options.download_bytes),
                 u64_to_i64(options.upload_bytes),
+                options.subscription_id,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -362,7 +433,10 @@ mod tests {
             proxy_files: vec!["proxies.txt".into()],
             source_lists: vec![],
             source_urls: vec![],
+            inline_proxy_sources: vec![],
+            inline_source_lists: vec![],
             output: "out.tsv".into(),
+            write_tsv: true,
             valid_output: None,
             database: ":memory:".into(),
             interfaces: vec![],
@@ -378,6 +452,7 @@ mod tests {
             download_bytes: 4096,
             upload_bytes: 2048,
             ip_info_url_template: None,
+            subscription_id: None,
         }
     }
 
