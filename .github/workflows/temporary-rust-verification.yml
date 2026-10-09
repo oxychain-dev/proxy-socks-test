@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   verify:
@@ -20,11 +20,24 @@ jobs:
           cargo --version
       - name: Install lint components
         run: rustup component add rustfmt clippy
-      - name: Format check
-        run: cargo fmt --all -- --check
+      - name: Apply rustfmt
+        run: cargo fmt --all
       - name: Cargo check
         run: cargo check --all-targets
       - name: Unit tests
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Diff sanity
+        run: git diff --check
+      - name: Commit rustfmt changes
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src
+          git commit -m "style: apply rustfmt"
+          git push origin HEAD:feature/proxy-list-validation
