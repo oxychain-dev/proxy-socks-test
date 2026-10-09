@@ -859,6 +859,55 @@ fn parse_args() -> clap::ArgMatches {
                 .help("HTTP(S) endpoint that returns the caller IP as plain text"),
         )
         .arg(
+            clap::Arg::new("profile")
+                .long("profile")
+                .value_name("profile")
+                .value_parser(["basic", "standard", "full"])
+                .default_value("standard")
+                .help("staged test profile: basic=validity, standard=latency/jitter, full=plus speed tests"),
+        )
+        .arg(
+            clap::Arg::new("latency-samples")
+                .long("latency-samples")
+                .value_name("count")
+                .default_value("3")
+                .help("HTTP latency samples for standard/full profiles"),
+        )
+        .arg(
+            clap::Arg::new("download-url")
+                .long("download-url")
+                .value_name("url-template")
+                .default_value("https://speed.cloudflare.com/__down?bytes={bytes}")
+                .help("full-profile download URL; {bytes} is replaced with the configured byte budget"),
+        )
+        .arg(
+            clap::Arg::new("upload-url")
+                .long("upload-url")
+                .value_name("url")
+                .default_value("https://speed.cloudflare.com/__up")
+                .help("full-profile HTTP POST upload endpoint"),
+        )
+        .arg(
+            clap::Arg::new("download-bytes")
+                .long("download-bytes")
+                .value_name("bytes")
+                .default_value("1048576")
+                .help("maximum requested download benchmark payload"),
+        )
+        .arg(
+            clap::Arg::new("upload-bytes")
+                .long("upload-bytes")
+                .value_name("bytes")
+                .default_value("262144")
+                .help("upload benchmark payload size"),
+        )
+        .arg(
+            clap::Arg::new("ip-info-url-template")
+                .long("ip-info-url-template")
+                .value_name("url-template")
+                .help("optional JSON IP-enrichment URL containing {ip}; enrichment never affects validity"),
+        )
+        .arg(
             clap::Arg::new("debug")
                 .long("debug")
                 .num_args(0)
@@ -916,6 +965,21 @@ async fn main() -> Result<()> {
             .expect("timeout")
             .parse::<u64>()
             .map_err(|err| anyhow!("invalid --timeout: {err}"))?;
+        let latency_samples = matches
+            .get_one::<String>("latency-samples")
+            .expect("latency-samples")
+            .parse::<usize>()
+            .map_err(|err| anyhow!("invalid --latency-samples: {err}"))?;
+        let download_bytes = matches
+            .get_one::<String>("download-bytes")
+            .expect("download-bytes")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --download-bytes: {err}"))?;
+        let upload_bytes = matches
+            .get_one::<String>("upload-bytes")
+            .expect("upload-bytes")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --upload-bytes: {err}"))?;
 
         return batch::run_batch(batch::BatchOptions {
             proxy_files,
@@ -930,6 +994,13 @@ async fn main() -> Result<()> {
             concurrency,
             timeout_secs,
             check_url: matches.get_one::<String>("check-url").expect("check-url").clone(),
+            profile: matches.get_one::<String>("profile").expect("profile").clone(),
+            latency_samples,
+            download_url: matches.get_one::<String>("download-url").expect("download-url").clone(),
+            upload_url: matches.get_one::<String>("upload-url").expect("upload-url").clone(),
+            download_bytes,
+            upload_bytes,
+            ip_info_url_template: matches.get_one::<String>("ip-info-url-template").cloned(),
         })
         .await;
     }
