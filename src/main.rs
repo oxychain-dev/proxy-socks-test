@@ -913,9 +913,8 @@ async fn main() -> Result<()> {
         .get_one::<String>("proxyport")
         .ok_or_else(|| anyhow!("single-proxy mode requires --proxyport"))?
         .clone();
-    let proxyportint = proxyport
-        .parse::<u16>()
-        .map_err(|err| anyhow!("invalid --proxyport: {err}"))?;
+    let proxyportint =
+        proxyport.parse::<u16>().map_err(|err| anyhow!("invalid --proxyport: {err}"))?;
 
     let serverip = matches
         .get_one::<String>("serverip")
@@ -924,9 +923,8 @@ async fn main() -> Result<()> {
     let serveripstr: &str = string_to_static_str(serverip);
 
     let serverport = matches.get_one::<String>("serverport").expect("serverport").clone();
-    let serverportint = serverport
-        .parse::<u16>()
-        .map_err(|err| anyhow!("invalid --serverport: {err}"))?;
+    let serverportint =
+        serverport.parse::<u16>().map_err(|err| anyhow!("invalid --serverport: {err}"))?;
 
     let authinfo = matches.get_one::<String>("auth").expect("auth").clone();
     init_auth(&authinfo);

@@ -92,24 +92,17 @@ impl ProxySpec {
 
     pub(super) fn proxy_url(&self, protocol: ProxyProtocol, tested_ip: IpAddr) -> Result<Url> {
         if protocol != ProxyProtocol::Socks5 && self.username.is_some() {
-            return Err(anyhow!(
-                "credentials are supported only for SOCKS5 batch validation"
-            ));
+            return Err(anyhow!("credentials are supported only for SOCKS5 batch validation"));
         }
 
         let host = match tested_ip {
             IpAddr::V4(ip) => ip.to_string(),
             IpAddr::V6(ip) => format!("[{ip}]"),
         };
-        let mut url = Url::parse(&format!(
-            "{}://{}:{}",
-            protocol.reqwest_scheme(),
-            host,
-            self.port
-        ))?;
+        let mut url =
+            Url::parse(&format!("{}://{}:{}", protocol.reqwest_scheme(), host, self.port))?;
         if let Some(username) = &self.username {
-            url.set_username(username)
-                .map_err(|_| anyhow!("invalid proxy username"))?;
+            url.set_username(username).map_err(|_| anyhow!("invalid proxy username"))?;
             url.set_password(Some(self.password.as_deref().unwrap_or_default()))
                 .map_err(|_| anyhow!("invalid proxy password"))?;
         }
@@ -159,16 +152,9 @@ impl BatchResult {
             .map(|m| m.protocol.to_string())
             .unwrap_or_else(|| self.proxy.protocol.to_string());
         let tested_ip = self.tested_ip.map(|ip| ip.to_string()).unwrap_or_default();
-        let latency_ms = self
-            .metrics
-            .as_ref()
-            .map(|m| m.latency_ms.to_string())
-            .unwrap_or_default();
-        let exit_ip = self
-            .metrics
-            .as_ref()
-            .map(|m| m.exit_ip.to_string())
-            .unwrap_or_default();
+        let latency_ms =
+            self.metrics.as_ref().map(|m| m.latency_ms.to_string()).unwrap_or_default();
+        let exit_ip = self.metrics.as_ref().map(|m| m.exit_ip.to_string()).unwrap_or_default();
 
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -192,9 +178,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         && options.source_lists.is_empty()
         && options.source_urls.is_empty()
     {
-        return Err(anyhow!(
-            "batch mode requires --proxy-file, --source-list, or --source-url"
-        ));
+        return Err(anyhow!("batch mode requires --proxy-file, --source-list, or --source-url"));
     }
     if options.concurrency == 0 {
         return Err(anyhow!("--concurrency must be greater than zero"));
@@ -225,14 +209,17 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         .build()
         .context("failed to build source download client")?;
 
-    let (proxies, load_stats) = input::load_proxies(&source_client, &options, default_protocol).await?;
+    let (proxies, load_stats) =
+        input::load_proxies(&source_client, &options, default_protocol).await?;
     if proxies.is_empty() {
         return Err(anyhow!("no valid proxy entries found in the supplied inputs"));
     }
 
     println!(
         "loaded {} unique proxies ({} malformed skipped, {} source errors)",
-        proxies.len(), load_stats.malformed_entries, load_stats.source_errors
+        proxies.len(),
+        load_stats.malformed_entries,
+        load_stats.source_errors
     );
 
     let output_file = fs::File::create(&options.output)
@@ -272,9 +259,12 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         tested += 1;
         if result.valid() {
             valid += 1;
-            if let (Some(writer), Some(metrics)) = (valid_output.as_mut(), result.metrics.as_ref()) {
+            if let (Some(writer), Some(metrics)) = (valid_output.as_mut(), result.metrics.as_ref())
+            {
                 writer
-                    .write_all(format!("{}\n", result.proxy.normalized(metrics.protocol)).as_bytes())
+                    .write_all(
+                        format!("{}\n", result.proxy.normalized(metrics.protocol)).as_bytes(),
+                    )
                     .await?;
             }
         }
@@ -300,7 +290,9 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     Ok(())
 }
 
-fn spawn_validation(tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>) {
+fn spawn_validation(
+    tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
+) {
     tasks.spawn(async move { validate::validate_proxy(proxy, &options).await });
 }
 

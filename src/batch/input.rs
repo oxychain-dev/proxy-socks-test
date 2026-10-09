@@ -11,9 +11,7 @@ pub(super) struct LoadStats {
 }
 
 pub(super) async fn load_proxies(
-    client: &Client,
-    options: &BatchOptions,
-    default_protocol: ProxyProtocol,
+    client: &Client, options: &BatchOptions, default_protocol: ProxyProtocol,
 ) -> Result<(Vec<ProxySpec>, LoadStats)> {
     let mut proxies = Vec::new();
     let mut seen = HashSet::new();
@@ -75,14 +73,9 @@ pub(super) async fn load_proxies(
             continue;
         }
         match fetch_url(client, url).await {
-            Ok(text) => parse_proxy_text(
-                url,
-                &text,
-                default_protocol,
-                &mut proxies,
-                &mut seen,
-                &mut stats,
-            ),
+            Ok(text) => {
+                parse_proxy_text(url, &text, default_protocol, &mut proxies, &mut seen, &mut stats)
+            }
             Err(err) => {
                 stats.source_errors += 1;
                 eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");
@@ -97,9 +90,7 @@ async fn read_text_source(client: &Client, source: &str) -> Result<String> {
     if is_http_url(source) {
         fetch_url(client, source).await
     } else {
-        fs::read_to_string(source)
-            .await
-            .with_context(|| format!("failed to read {source}"))
+        fs::read_to_string(source).await.with_context(|| format!("failed to read {source}"))
     }
 }
 
@@ -117,18 +108,12 @@ async fn fetch_url(client: &Client, url: &str) -> Result<String> {
 }
 
 fn meaningful_lines(text: &str) -> impl Iterator<Item = &str> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#'))
 }
 
 fn parse_proxy_text(
-    source: &str,
-    text: &str,
-    default_protocol: ProxyProtocol,
-    proxies: &mut Vec<ProxySpec>,
-    seen: &mut HashSet<String>,
-    stats: &mut LoadStats,
+    source: &str, text: &str, default_protocol: ProxyProtocol, proxies: &mut Vec<ProxySpec>,
+    seen: &mut HashSet<String>, stats: &mut LoadStats,
 ) {
     for line in meaningful_lines(text) {
         if let Ok(proxy) = parse_proxy_spec(line, source, default_protocol) {
@@ -192,13 +177,8 @@ fn parse_proxy_spec(raw: &str, source: &str, default_protocol: ProxyProtocol) ->
     };
 
     let url = Url::parse(&url_text).with_context(|| format!("invalid proxy entry: {raw}"))?;
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow!("proxy host is missing: {raw}"))?
-        .to_owned();
-    let port = url
-        .port()
-        .ok_or_else(|| anyhow!("proxy port is missing: {raw}"))?;
+    let host = url.host_str().ok_or_else(|| anyhow!("proxy host is missing: {raw}"))?.to_owned();
+    let port = url.port().ok_or_else(|| anyhow!("proxy port is missing: {raw}"))?;
     let username = (!url.username().is_empty()).then(|| url.username().to_owned());
     let password = url.password().map(str::to_owned);
 
@@ -231,12 +211,9 @@ mod tests {
 
     #[test]
     fn parses_socks5_url_with_auth() {
-        let proxy = parse_proxy_spec(
-            "socks5://user:pass@example.com:1080",
-            "test",
-            ProxyProtocol::Auto,
-        )
-        .unwrap();
+        let proxy =
+            parse_proxy_spec("socks5://user:pass@example.com:1080", "test", ProxyProtocol::Auto)
+                .unwrap();
         assert_eq!(proxy.protocol, ProxyProtocol::Socks5);
         assert_eq!(proxy.host, "example.com");
         assert_eq!(proxy.username.as_deref(), Some("user"));
