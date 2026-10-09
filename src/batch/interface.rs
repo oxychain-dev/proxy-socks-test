@@ -46,6 +46,10 @@ fn select_targets_from_entries(
     selected: &[String],
     all_interfaces: bool,
 ) -> Result<Vec<InterfaceTarget>> {
+    if selected.is_empty() && !all_interfaces {
+        return Ok(vec![InterfaceTarget::default_route()]);
+    }
+
     let mut by_name: BTreeMap<String, BTreeSet<IpAddr>> = BTreeMap::new();
     for (name, ip) in entries {
         if ip.is_unspecified() || ip.is_multicast() {
