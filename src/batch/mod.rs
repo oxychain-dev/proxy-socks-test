@@ -1,9 +1,13 @@
 mod input;
 mod interface;
+mod model;
 mod store;
 mod validate;
 
 use anyhow::{anyhow, Context, Result};
+pub(super) use model::{
+    BatchResult, IpMetadata, ProbeMetrics, StageResult, StageStatus, TestProfile,
+};
 use reqwest::{Client, Url};
 use std::{
     collections::HashSet,
@@ -33,6 +37,13 @@ pub struct BatchOptions {
     pub concurrency: usize,
     pub timeout_secs: u64,
     pub check_url: String,
+    pub profile: String,
+    pub latency_samples: usize,
+    pub download_url: String,
+    pub upload_url: String,
+    pub download_bytes: u64,
+    pub upload_bytes: u64,
+    pub ip_info_url_template: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -153,26 +164,7 @@ impl ProxySpec {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct ProbeMetrics {
-    pub(super) protocol: ProxyProtocol,
-    pub(super) latency_ms: u128,
-    pub(super) exit_ip: IpAddr,
-}
-
-#[derive(Debug)]
-pub(super) struct BatchResult {
-    pub(super) proxy: ProxySpec,
-    pub(super) tested_ip: Option<IpAddr>,
-    pub(super) metrics: Option<ProbeMetrics>,
-    pub(super) error: Option<String>,
-}
-
 impl BatchResult {
-    fn valid(&self) -> bool {
-        self.metrics.is_some()
-    }
-
     fn tsv_row(&self, target: &interface::InterfaceTarget, tester_ip: Option<IpAddr>) -> String {
         let tester_ip = tester_ip.map(|ip| ip.to_string()).unwrap_or_default();
         let protocol = self
@@ -180,29 +172,68 @@ impl BatchResult {
             .as_ref()
             .map(|m| m.protocol.to_string())
             .unwrap_or_else(|| self.proxy.protocol.to_string());
+        let resolved_ips =
+            self.resolved_ips.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
         let tested_ip = self.tested_ip.map(|ip| ip.to_string()).unwrap_or_default();
-        let latency_ms =
-            self.metrics.as_ref().map(|m| m.latency_ms.to_string()).unwrap_or_default();
+        let endpoint_connect_ms =
+            self.endpoint_connect_ms.map(|value| value.to_string()).unwrap_or_default();
+        let validation_latency_ms = self
+            .metrics
+            .as_ref()
+            .map(|m| m.validation_latency_ms.to_string())
+            .unwrap_or_default();
         let exit_ip = self.metrics.as_ref().map(|m| m.exit_ip.to_string()).unwrap_or_default();
+        let exit_changed = self
+            .metrics
+            .as_ref()
+            .map(|m| m.exit_ip_changed.to_string())
+            .unwrap_or_default();
+        let endpoint_info = self.endpoint_ip_info.as_ref();
+        let exit_info = self.metrics.as_ref().and_then(|m| m.exit_ip_info.as_ref());
 
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             tsv_escape(&self.proxy.report_source()),
             tsv_escape(&self.proxy.report_input()),
             tsv_escape(target.label()),
             tsv_escape(&target.local_ips_text()),
             tester_ip,
-            protocol,
             tsv_escape(&self.proxy.host),
+            resolved_ips,
             tested_ip,
+            tsv_escape(self.reverse_dns.as_deref().unwrap_or_default()),
             self.proxy.port,
             self.valid(),
-            latency_ms,
+            protocol,
+            endpoint_connect_ms,
+            validation_latency_ms,
+            format_metric(self.metrics.as_ref().and_then(|m| m.latency_p50_ms)),
+            format_metric(self.metrics.as_ref().and_then(|m| m.latency_p95_ms)),
+            format_metric(self.metrics.as_ref().and_then(|m| m.jitter_ms)),
+            format_metric(self.metrics.as_ref().and_then(|m| m.download_mbps)),
+            format_metric(self.metrics.as_ref().and_then(|m| m.upload_mbps)),
             exit_ip,
+            exit_changed,
+            tsv_escape(endpoint_info.and_then(|m| m.country.as_deref()).unwrap_or_default()),
+            tsv_escape(endpoint_info.and_then(|m| m.asn.as_deref()).unwrap_or_default()),
+            tsv_escape(
+                endpoint_info
+                    .and_then(|m| m.organization.as_deref())
+                    .unwrap_or_default()
+            ),
+            tsv_escape(exit_info.and_then(|m| m.country.as_deref()).unwrap_or_default()),
+            tsv_escape(exit_info.and_then(|m| m.asn.as_deref()).unwrap_or_default()),
+            tsv_escape(
+                exit_info
+                    .and_then(|m| m.organization.as_deref())
+                    .unwrap_or_default()
+            ),
+            tsv_escape(&stage_status_text(&self.stages)),
             tsv_escape(self.error.as_deref().unwrap_or_default())
         )
     }
 }
+
 
 pub async fn run_batch(options: BatchOptions) -> Result<()> {
     validate_options(&options)?;
@@ -219,6 +250,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     );
 
     let default_protocol = ProxyProtocol::parse(&options.default_protocol)?;
+    let _profile = TestProfile::parse(&options.profile)?;
     let source_client = Client::builder()
         .no_proxy()
         .user_agent(concat!("proxy-socks-test/", env!("CARGO_PKG_VERSION")))
@@ -245,7 +277,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     let mut output = BufWriter::new(output_file);
     output
         .write_all(
-            b"source\tinput\tinterface\tlocal_ips\ttester_ip\tprotocol\tproxy_host\ttested_ip\tproxy_port\tvalid\tlatency_ms\texit_ip\terror\n",
+            b"source\tinput\tinterface\tlocal_ips\ttester_ip\tproxy_host\tresolved_ips\ttested_ip\treverse_dns\tproxy_port\tvalid\tprotocol\ttcp_connect_ms\tvalidation_latency_ms\tlatency_p50_ms\tlatency_p95_ms\tjitter_ms\tdownload_mbps\tupload_mbps\texit_ip\texit_ip_changed\tendpoint_country\tendpoint_asn\tendpoint_org\texit_country\texit_asn\texit_org\tstages\terror\n",
         )
         .await?;
 
@@ -266,6 +298,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     let mut tested = 0usize;
     let mut valid = 0usize;
     let mut valid_written = HashSet::new();
+    let enrichment_cache = validate::new_ip_info_cache();
 
     for target in targets {
         let target = Arc::new(target);
@@ -288,7 +321,13 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         let mut tasks = JoinSet::new();
         for _ in 0..shared.concurrency.min(proxies.len()) {
             if let Some(proxy) = iter.next() {
-                spawn_validation(&mut tasks, proxy, Arc::clone(&shared), Arc::clone(&target));
+                spawn_validation(
+                    &mut tasks,
+                    proxy,
+                    Arc::clone(&shared),
+                    Arc::clone(&target),
+                    Arc::clone(&enrichment_cache),
+                );
             }
         }
 
@@ -318,7 +357,13 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
                 println!("progress: {tested}/{total_checks}, valid checks: {valid}");
             }
             if let Some(proxy) = iter.next() {
-                spawn_validation(&mut tasks, proxy, Arc::clone(&shared), Arc::clone(&target));
+                spawn_validation(
+                    &mut tasks,
+                    proxy,
+                    Arc::clone(&shared),
+                    Arc::clone(&target),
+                    Arc::clone(&enrichment_cache),
+                );
             }
         }
 
@@ -357,6 +402,28 @@ fn validate_options(options: &BatchOptions) -> Result<()> {
     if options.timeout_secs == 0 {
         return Err(anyhow!("--timeout must be greater than zero"));
     }
+    if options.latency_samples == 0 {
+        return Err(anyhow!("--latency-samples must be greater than zero"));
+    }
+    TestProfile::parse(&options.profile)?;
+    const MAX_BENCHMARK_BYTES: u64 = 100 * 1024 * 1024;
+    if options.download_bytes == 0 || options.download_bytes > MAX_BENCHMARK_BYTES {
+        return Err(anyhow!("--download-bytes must be between 1 and 104857600"));
+    }
+    if options.upload_bytes == 0 || options.upload_bytes > MAX_BENCHMARK_BYTES {
+        return Err(anyhow!("--upload-bytes must be between 1 and 104857600"));
+    }
+    if let Some(template) = &options.ip_info_url_template {
+        if !template.contains("{ip}") {
+            return Err(anyhow!("--ip-info-url-template must contain {ip}"));
+        }
+        validate_http_url(&template.replace("{ip}", "127.0.0.1"), "--ip-info-url-template")?;
+    }
+    validate_http_url(
+        &options.download_url.replace("{bytes}", &options.download_bytes.to_string()),
+        "--download-url",
+    )?;
+    validate_http_url(&options.upload_url, "--upload-url")?;
     ensure_distinct_artifact_paths(
         &options.output,
         options.valid_output.as_deref(),
@@ -442,10 +509,35 @@ fn normalized_output_path(value: &str) -> Result<PathBuf> {
 }
 
 fn spawn_validation(
-    tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
+    tasks: &mut JoinSet<BatchResult>,
+    proxy: ProxySpec,
+    options: Arc<BatchOptions>,
     target: Arc<interface::InterfaceTarget>,
+    enrichment_cache: validate::IpInfoCache,
 ) {
-    tasks.spawn(async move { validate::validate_proxy(proxy, &options, &target).await });
+    tasks.spawn(async move {
+        validate::validate_proxy(proxy, &options, &target, enrichment_cache).await
+    });
+}
+
+fn validate_http_url(value: &str, flag: &str) -> Result<()> {
+    let url = Url::parse(value).with_context(|| format!("invalid {flag}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(anyhow!("{flag} must use http:// or https://"));
+    }
+    Ok(())
+}
+
+fn format_metric(value: Option<f64>) -> String {
+    value.map(|value| format!("{value:.3}")).unwrap_or_default()
+}
+
+fn stage_status_text(stages: &[StageResult]) -> String {
+    stages
+        .iter()
+        .map(|stage| format!("{}:{}={}", stage.stage, stage.name, stage.status.as_str()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn tsv_escape(value: &str) -> String {
