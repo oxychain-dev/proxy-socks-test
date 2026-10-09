@@ -46,7 +46,7 @@
 
 #### Phase 2 / v0.3.0 — Staged diagnostic and performance pipeline
 
-* [ ] Implement staged validation profiles so cheap checks gate expensive checks.
+* [~] Implement staged validation profiles so cheap checks gate expensive checks.
   * [ ] Stage 0: parse/deduplicate/source attribution.
   * [ ] Stage 1: resolve proxy host and retain every A/AAAA result plus selected tested IP.
   * [ ] Stage 2: endpoint reachability/connect timing.
