@@ -747,16 +747,8 @@ fn subscription_command() -> clap::Command {
         )
         .arg(clap::Arg::new("concurrency").long("concurrency").default_value("100"))
         .arg(clap::Arg::new("timeout").long("timeout").default_value("10"))
-        .arg(
-            clap::Arg::new("check-url")
-                .long("check-url")
-                .default_value("https://api.ipify.org"),
-        )
-        .arg(
-            clap::Arg::new("latency-samples")
-                .long("latency-samples")
-                .default_value("3"),
-        )
+        .arg(clap::Arg::new("check-url").long("check-url").default_value("https://api.ipify.org"))
+        .arg(clap::Arg::new("latency-samples").long("latency-samples").default_value("3"))
         .arg(
             clap::Arg::new("download-url")
                 .long("download-url")
@@ -767,16 +759,8 @@ fn subscription_command() -> clap::Command {
                 .long("upload-url")
                 .default_value("https://speed.cloudflare.com/__up"),
         )
-        .arg(
-            clap::Arg::new("download-bytes")
-                .long("download-bytes")
-                .default_value("1048576"),
-        )
-        .arg(
-            clap::Arg::new("upload-bytes")
-                .long("upload-bytes")
-                .default_value("262144"),
-        )
+        .arg(clap::Arg::new("download-bytes").long("download-bytes").default_value("1048576"))
+        .arg(clap::Arg::new("upload-bytes").long("upload-bytes").default_value("262144"))
         .arg(
             clap::Arg::new("ip-info-url-template")
                 .long("ip-info-url-template")

@@ -337,18 +337,12 @@ fn format_optional_metric(value: Option<f64>) -> String {
     value.map(|value| format!("{value:.3}")).unwrap_or_else(|| "-".to_owned())
 }
 
-pub async fn run_subscription_command(
-    matches: &clap::ArgMatches,
-    database: &str,
-) -> Result<()> {
+pub async fn run_subscription_command(matches: &clap::ArgMatches, database: &str) -> Result<()> {
     subscription::handle_subscription_command(matches, database).await
 }
 
 pub async fn run_service(
-    database: &str,
-    poll_seconds: u64,
-    retention_days: u64,
-    once: bool,
+    database: &str, poll_seconds: u64, retention_days: u64, once: bool,
 ) -> Result<()> {
     subscription::run_service(database, poll_seconds, retention_days, once).await
 }
@@ -531,12 +525,7 @@ pub(super) async fn run_batch_with_outcome(options: BatchOptions) -> Result<Batc
         shared.database
     );
     overall_summary.print("overall");
-    Ok(BatchRunOutcome {
-        run_id,
-        proxy_count: proxies.len(),
-        tested,
-        valid,
-    })
+    Ok(BatchRunOutcome { run_id, proxy_count: proxies.len(), tested, valid })
 }
 
 fn validate_options(options: &BatchOptions) -> Result<()> {
@@ -599,9 +588,7 @@ fn redact_source(value: &str) -> String {
 }
 
 fn ensure_distinct_artifact_paths(
-    output: Option<&str>,
-    valid_output: Option<&str>,
-    database: &str,
+    output: Option<&str>, valid_output: Option<&str>, database: &str,
 ) -> Result<()> {
     let mut artifacts = vec![("--database", normalized_output_path(database)?)];
     if let Some(output) = output {

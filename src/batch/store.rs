@@ -170,7 +170,6 @@ CREATE INDEX IF NOT EXISTS idx_subscription_runs_subscription
     ON subscription_runs(subscription_id, fetched_at);
 ";
 
-
 pub(super) struct Store {
     conn: Connection,
 }

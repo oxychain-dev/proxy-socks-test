@@ -20,14 +20,7 @@ pub(super) async fn load_proxies(
     let mut stats = LoadStats::default();
 
     for (source, text) in &options.inline_proxy_sources {
-        parse_proxy_text(
-            source,
-            text,
-            default_protocol,
-            &mut proxies,
-            &mut seen,
-            &mut stats,
-        );
+        parse_proxy_text(source, text, default_protocol, &mut proxies, &mut seen, &mut stats);
     }
 
     for (source, text) in &options.inline_source_lists {
@@ -117,25 +110,17 @@ async fn read_text_source(client: &Client, source: &str) -> Result<String> {
 }
 
 pub(super) async fn response_text_limited(
-    response: reqwest::Response,
-    label: &str,
+    response: reqwest::Response, label: &str,
 ) -> Result<String> {
-    if response
-        .content_length()
-        .is_some_and(|size| size > MAX_SOURCE_BYTES as u64)
-    {
-        return Err(anyhow!(
-            "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
-        ));
+    if response.content_length().is_some_and(|size| size > MAX_SOURCE_BYTES as u64) {
+        return Err(anyhow!("source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"));
     }
     let bytes = response
         .bytes()
         .await
         .with_context(|| format!("failed to read response body from {label}"))?;
     if bytes.len() > MAX_SOURCE_BYTES {
-        return Err(anyhow!(
-            "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
-        ));
+        return Err(anyhow!("source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"));
     }
     String::from_utf8(bytes.to_vec())
         .with_context(|| format!("failed to decode UTF-8 text from {label}"))
@@ -153,13 +138,8 @@ async fn fetch_url(client: &Client, url: &str) -> Result<String> {
 }
 
 async fn parse_source_list_text(
-    client: &Client,
-    source: &str,
-    text: &str,
-    default_protocol: ProxyProtocol,
-    proxies: &mut Vec<ProxySpec>,
-    seen: &mut HashSet<String>,
-    stats: &mut LoadStats,
+    client: &Client, source: &str, text: &str, default_protocol: ProxyProtocol,
+    proxies: &mut Vec<ProxySpec>, seen: &mut HashSet<String>, stats: &mut LoadStats,
 ) {
     for url in meaningful_lines(text) {
         if !is_http_url(url) {
@@ -168,14 +148,9 @@ async fn parse_source_list_text(
             continue;
         }
         match fetch_url(client, url).await {
-            Ok(proxy_text) => parse_proxy_text(
-                url,
-                &proxy_text,
-                default_protocol,
-                proxies,
-                seen,
-                stats,
-            ),
+            Ok(proxy_text) => {
+                parse_proxy_text(url, &proxy_text, default_protocol, proxies, seen, stats)
+            }
             Err(err) => {
                 stats.source_errors += 1;
                 eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");

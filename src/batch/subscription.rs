@@ -8,9 +8,7 @@ use reqwest::{
     Client, StatusCode,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};
-use std::{
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 
 #[derive(Clone, Debug)]
@@ -89,8 +87,9 @@ impl SubscriptionDb {
     }
 
     fn create(&self, value: &NewSubscription) -> Result<i64> {
-        self.conn.execute(
-            "INSERT INTO subscriptions(
+        self.conn
+            .execute(
+                "INSERT INTO subscriptions(
                 name, source_type, source_url, source_display, enabled, interval_seconds,
                 interface_names, all_interfaces, profile, default_protocol, concurrency,
                 timeout_seconds, check_url, latency_samples, download_url, upload_url,
@@ -99,46 +98,41 @@ impl SubscriptionDb {
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
                 ?15, ?16, ?17, ?18, ?19, 0
              )",
-            params![
-                value.name,
-                value.source_type,
-                value.source_url,
-                redact_source(&value.source_url),
-                i64::from(value.enabled),
-                u64_to_i64(value.interval_seconds),
-                value.interface_names.join(","),
-                i64::from(value.all_interfaces),
-                value.profile,
-                value.default_protocol,
-                usize_to_i64(value.concurrency),
-                u64_to_i64(value.timeout_seconds),
-                value.check_url,
-                usize_to_i64(value.latency_samples),
-                value.download_url,
-                value.upload_url,
-                u64_to_i64(value.download_bytes),
-                u64_to_i64(value.upload_bytes),
-                value.ip_info_url_template,
-            ],
-        )
-        .with_context(|| format!("failed to create subscription {}", value.name))?;
+                params![
+                    value.name,
+                    value.source_type,
+                    value.source_url,
+                    redact_source(&value.source_url),
+                    i64::from(value.enabled),
+                    u64_to_i64(value.interval_seconds),
+                    value.interface_names.join(","),
+                    i64::from(value.all_interfaces),
+                    value.profile,
+                    value.default_protocol,
+                    usize_to_i64(value.concurrency),
+                    u64_to_i64(value.timeout_seconds),
+                    value.check_url,
+                    usize_to_i64(value.latency_samples),
+                    value.download_url,
+                    value.upload_url,
+                    u64_to_i64(value.download_bytes),
+                    u64_to_i64(value.upload_bytes),
+                    value.ip_info_url_template,
+                ],
+            )
+            .with_context(|| format!("failed to create subscription {}", value.name))?;
         Ok(self.conn.last_insert_rowid())
     }
 
     fn list(&self) -> Result<Vec<Subscription>> {
-        let mut statement =
-            self.conn.prepare(&format!("{SUBSCRIPTION_SELECT} ORDER BY id"))?;
+        let mut statement = self.conn.prepare(&format!("{SUBSCRIPTION_SELECT} ORDER BY id"))?;
         let rows = statement.query_map([], subscription_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
     fn get(&self, id: i64) -> Result<Subscription> {
         self.conn
-            .query_row(
-                &format!("{SUBSCRIPTION_SELECT} WHERE id = ?1"),
-                [id],
-                subscription_from_row,
-            )
+            .query_row(&format!("{SUBSCRIPTION_SELECT} WHERE id = ?1"), [id], subscription_from_row)
             .optional()?
             .ok_or_else(|| anyhow!("subscription {id} not found"))
     }
@@ -173,7 +167,9 @@ impl SubscriptionDb {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
-    fn save_fetch(&self, subscription: &Subscription, fetched: &FetchedSource, now: i64) -> Result<()> {
+    fn save_fetch(
+        &self, subscription: &Subscription, fetched: &FetchedSource, now: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE subscriptions
              SET cached_payload = CASE WHEN ?2 = 1 THEN cached_payload ELSE ?3 END,
@@ -197,10 +193,7 @@ impl SubscriptionDb {
     }
 
     fn record_success(
-        &self,
-        subscription: &Subscription,
-        fetched: &FetchedSource,
-        outcome: BatchRunOutcome,
+        &self, subscription: &Subscription, fetched: &FetchedSource, outcome: BatchRunOutcome,
         now: i64,
     ) -> Result<()> {
         let next_run_at = now.saturating_add(u64_to_i64(subscription.interval_seconds));
@@ -209,12 +202,7 @@ impl SubscriptionDb {
              SET last_success_at = ?2, last_error = NULL, item_count = ?3,
                  consecutive_failures = 0, next_run_at = ?4, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?1",
-            params![
-                subscription.id,
-                now,
-                usize_to_i64(outcome.proxy_count),
-                next_run_at,
-            ],
+            params![subscription.id, now, usize_to_i64(outcome.proxy_count), next_run_at,],
         )?;
         self.conn.execute(
             "INSERT INTO subscription_runs(
@@ -233,11 +221,7 @@ impl SubscriptionDb {
     }
 
     fn record_failure(
-        &self,
-        subscription: &Subscription,
-        now: i64,
-        status: Option<u16>,
-        error: &str,
+        &self, subscription: &Subscription, now: i64, status: Option<u16>, error: &str,
     ) -> Result<()> {
         let failures = subscription.consecutive_failures.saturating_add(1);
         let delay = retry_delay(subscription.interval_seconds, failures);
@@ -272,10 +256,8 @@ impl SubscriptionDb {
             return Ok((0, 0));
         }
         let cutoff = now.saturating_sub(u64_to_i64(retention_days.saturating_mul(86_400)));
-        let subscription_runs = self.conn.execute(
-            "DELETE FROM subscription_runs WHERE fetched_at < ?1",
-            [cutoff],
-        )?;
+        let subscription_runs =
+            self.conn.execute("DELETE FROM subscription_runs WHERE fetched_at < ?1", [cutoff])?;
         let modifier = format!("-{retention_days} days");
         let runs = self.conn.execute(
             "DELETE FROM runs
@@ -336,8 +318,7 @@ fn subscription_from_row(row: &Row<'_>) -> rusqlite::Result<Subscription> {
 }
 
 pub(super) async fn handle_subscription_command(
-    matches: &ArgMatches,
-    database: &str,
+    matches: &ArgMatches, database: &str,
 ) -> Result<()> {
     let db = SubscriptionDb::open(database)?;
     match matches.subcommand() {
@@ -401,10 +382,7 @@ pub(super) async fn handle_subscription_command(
 }
 
 pub(super) async fn run_service(
-    database: &str,
-    poll_seconds: u64,
-    retention_days: u64,
-    once: bool,
+    database: &str, poll_seconds: u64, retention_days: u64, once: bool,
 ) -> Result<()> {
     if poll_seconds == 0 {
         return Err(anyhow!("--poll-seconds must be greater than zero"));
@@ -527,9 +505,7 @@ async fn fetch_subscription_source(subscription: &Subscription) -> Result<Fetche
 }
 
 fn subscription_batch_options(
-    database: &str,
-    subscription: &Subscription,
-    payload: &str,
+    database: &str, subscription: &Subscription, payload: &str,
 ) -> BatchOptions {
     let source = subscription.source_url.clone();
     let (inline_proxy_sources, inline_source_lists) = if subscription.source_type == "source-list" {
@@ -608,18 +584,27 @@ fn print_subscription(value: &Subscription) {
     println!("source_type={}", value.source_type);
     println!("source={}", value.source_display);
     println!("interval_seconds={}", value.interval_seconds);
-    println!("interfaces={}", if value.all_interfaces {
-        "all".to_owned()
-    } else if value.interface_names.is_empty() {
-        "default".to_owned()
-    } else {
-        value.interface_names.join(",")
-    });
+    println!(
+        "interfaces={}",
+        if value.all_interfaces {
+            "all".to_owned()
+        } else if value.interface_names.is_empty() {
+            "default".to_owned()
+        } else {
+            value.interface_names.join(",")
+        }
+    );
     println!("profile={}", value.profile);
     println!("protocol={}", value.default_protocol);
-    println!("last_fetch_status={}", value.last_fetch_status.map(|v| v.to_string()).unwrap_or_default());
+    println!(
+        "last_fetch_status={}",
+        value.last_fetch_status.map(|v| v.to_string()).unwrap_or_default()
+    );
     println!("last_fetch_at={}", value.last_fetch_at.map(|v| v.to_string()).unwrap_or_default());
-    println!("last_success_at={}", value.last_success_at.map(|v| v.to_string()).unwrap_or_default());
+    println!(
+        "last_success_at={}",
+        value.last_success_at.map(|v| v.to_string()).unwrap_or_default()
+    );
     println!("item_count={}", value.item_count);
     println!("consecutive_failures={}", value.consecutive_failures);
     println!("next_run_at={}", value.next_run_at);
@@ -634,19 +619,12 @@ fn header_text(value: Option<&reqwest::header::HeaderValue>) -> Option<String> {
 }
 
 fn split_interfaces(value: &str) -> Vec<String> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect()
+    value.split(',').map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned).collect()
 }
 
 fn retry_delay(interval_seconds: u64, failures: u32) -> u64 {
     let shift = failures.saturating_sub(1).min(6);
-    interval_seconds
-        .saturating_mul(1_u64 << shift)
-        .clamp(5, 86_400)
+    interval_seconds.saturating_mul(1_u64 << shift).clamp(5, 86_400)
 }
 
 fn unix_now() -> Result<i64> {
@@ -658,28 +636,19 @@ fn unix_now() -> Result<i64> {
 }
 
 fn required_string(matches: &ArgMatches, name: &str) -> Result<String> {
-    matches
-        .get_one::<String>(name)
-        .cloned()
-        .ok_or_else(|| anyhow!("missing --{name}"))
+    matches.get_one::<String>(name).cloned().ok_or_else(|| anyhow!("missing --{name}"))
 }
 
 fn parse_i64(matches: &ArgMatches, name: &str) -> Result<i64> {
-    required_string(matches, name)?
-        .parse()
-        .with_context(|| format!("invalid --{name}"))
+    required_string(matches, name)?.parse().with_context(|| format!("invalid --{name}"))
 }
 
 fn parse_u64(matches: &ArgMatches, name: &str) -> Result<u64> {
-    required_string(matches, name)?
-        .parse()
-        .with_context(|| format!("invalid --{name}"))
+    required_string(matches, name)?.parse().with_context(|| format!("invalid --{name}"))
 }
 
 fn parse_usize(matches: &ArgMatches, name: &str) -> Result<usize> {
-    required_string(matches, name)?
-        .parse()
-        .with_context(|| format!("invalid --{name}"))
+    required_string(matches, name)?.parse().with_context(|| format!("invalid --{name}"))
 }
 
 fn u64_to_i64(value: u64) -> i64 {
