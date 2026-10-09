@@ -23,15 +23,15 @@ Required validation for source changes:
 
 ```sh
 cargo fmt --all -- --check
-cargo check --all-targets
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
+cargo check --locked --all-targets
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 ```
 
 For batch/network changes, build the binary and run the controlled local smoke fixture:
 
 ```sh
-cargo build
+cargo build --locked
 python3 tests/batch_smoke.py target/debug/proxy-socks-test
 ```
 
