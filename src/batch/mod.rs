@@ -1,9 +1,12 @@
 mod input;
+mod interface;
+mod store;
 mod validate;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::{Client, Url};
 use std::{
+    collections::HashSet,
     env, fmt,
     net::IpAddr,
     path::{Component, Path, PathBuf},
@@ -23,6 +26,9 @@ pub struct BatchOptions {
     pub source_urls: Vec<String>,
     pub output: String,
     pub valid_output: Option<String>,
+    pub database: String,
+    pub interfaces: Vec<String>,
+    pub all_interfaces: bool,
     pub default_protocol: String,
     pub concurrency: usize,
     pub timeout_secs: u64,
@@ -61,7 +67,6 @@ impl ProxyProtocol {
         match self {
             Self::Socks4 => "socks4",
             Self::Socks4a => "socks4a",
-            // Remote DNS matches the legacy socks5_connect_hostname behavior.
             Self::Socks5 | Self::Auto => "socks5h",
         }
     }
@@ -168,7 +173,11 @@ impl BatchResult {
         self.metrics.is_some()
     }
 
-    fn tsv_row(&self, tester_ip: Option<IpAddr>) -> String {
+    fn tsv_row(
+        &self,
+        target: &interface::InterfaceTarget,
+        tester_ip: Option<IpAddr>,
+    ) -> String {
         let tester_ip = tester_ip.map(|ip| ip.to_string()).unwrap_or_default();
         let protocol = self
             .metrics
@@ -181,9 +190,11 @@ impl BatchResult {
         let exit_ip = self.metrics.as_ref().map(|m| m.exit_ip.to_string()).unwrap_or_default();
 
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             tsv_escape(&self.proxy.report_source()),
             tsv_escape(&self.proxy.report_input()),
+            tsv_escape(target.label()),
+            tsv_escape(&target.local_ips_text()),
             tester_ip,
             protocol,
             tsv_escape(&self.proxy.host),
@@ -198,39 +209,23 @@ impl BatchResult {
 }
 
 pub async fn run_batch(options: BatchOptions) -> Result<()> {
-    if options.proxy_files.is_empty()
-        && options.source_lists.is_empty()
-        && options.source_urls.is_empty()
-    {
-        return Err(anyhow!("batch mode requires --proxy-file, --source-list, or --source-url"));
-    }
-    if options.concurrency == 0 {
-        return Err(anyhow!("--concurrency must be greater than zero"));
-    }
-    if options.timeout_secs == 0 {
-        return Err(anyhow!("--timeout must be greater than zero"));
-    }
-    ensure_distinct_output_paths(&options.output, options.valid_output.as_deref())?;
+    validate_options(&options)?;
 
     let check_url = Url::parse(&options.check_url).context("invalid --check-url")?;
     if !matches!(check_url.scheme(), "http" | "https") {
         return Err(anyhow!("--check-url must use http:// or https://"));
     }
 
+    let targets = interface::select_targets(&options.interfaces, options.all_interfaces)?;
+    println!(
+        "network targets: {}",
+        targets.iter().map(interface::InterfaceTarget::label).collect::<Vec<_>>().join(", ")
+    );
+
     let default_protocol = ProxyProtocol::parse(&options.default_protocol)?;
-    let tester_ip = match validate::detect_tester_ip(&options).await {
-        Ok(ip) => {
-            println!("tester public IP: {ip}");
-            Some(ip)
-        }
-        Err(err) => {
-            eprintln!("warning: could not determine tester public IP: {err:#}");
-            None
-        }
-    };
     let source_client = Client::builder()
         .no_proxy()
-        .user_agent("proxy-socks-test/0.2")
+        .user_agent(concat!("proxy-socks-test/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(options.timeout_secs.max(15)))
         .build()
         .context("failed to build source download client")?;
@@ -254,7 +249,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     let mut output = BufWriter::new(output_file);
     output
         .write_all(
-            b"source\tinput\ttester_ip\tprotocol\tproxy_host\ttested_ip\tproxy_port\tvalid\tlatency_ms\texit_ip\terror\n",
+            b"source\tinput\tinterface\tlocal_ips\ttester_ip\tprotocol\tproxy_host\ttested_ip\tproxy_port\tvalid\tlatency_ms\texit_ip\terror\n",
         )
         .await?;
 
@@ -268,52 +263,119 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         None
     };
 
-    let total = proxies.len();
+    let store = store::Store::open(&options.database)?;
+    let run_id = store.start_run(&options, proxies.len(), targets.len())?;
     let shared = Arc::new(options);
-    let mut iter = proxies.into_iter();
-    let mut tasks = JoinSet::new();
-    for _ in 0..shared.concurrency.min(total) {
-        if let Some(proxy) = iter.next() {
-            spawn_validation(&mut tasks, proxy, Arc::clone(&shared));
-        }
-    }
-
+    let total_checks = proxies.len().saturating_mul(targets.len());
     let mut tested = 0usize;
     let mut valid = 0usize;
-    while let Some(joined) = tasks.join_next().await {
-        let result = joined.context("proxy validation task failed")?;
-        tested += 1;
-        if result.valid() {
-            valid += 1;
-            if let (Some(writer), Some(metrics)) = (valid_output.as_mut(), result.metrics.as_ref())
-            {
-                writer
-                    .write_all(
-                        format!("{}\n", result.proxy.normalized(metrics.protocol)).as_bytes(),
-                    )
-                    .await?;
+    let mut valid_written = HashSet::new();
+
+    for target in targets {
+        let target = Arc::new(target);
+        let tester_ip = match validate::detect_tester_ip(&shared, &target).await {
+            Ok(ip) => {
+                println!("interface {} tester public IP: {ip}", target.label());
+                Some(ip)
+            }
+            Err(err) => {
+                eprintln!(
+                    "warning: interface {} could not determine tester public IP: {err:#}",
+                    target.label()
+                );
+                None
+            }
+        };
+        let interface_run_id = store.start_interface_run(run_id, &target, tester_ip)?;
+
+        let mut iter = proxies.iter().cloned();
+        let mut tasks = JoinSet::new();
+        for _ in 0..shared.concurrency.min(proxies.len()) {
+            if let Some(proxy) = iter.next() {
+                spawn_validation(
+                    &mut tasks,
+                    proxy,
+                    Arc::clone(&shared),
+                    Arc::clone(&target),
+                );
             }
         }
-        output.write_all(result.tsv_row(tester_ip).as_bytes()).await?;
 
-        if tested.is_multiple_of(100) || tested == total {
-            println!("progress: {tested}/{total}, valid: {valid}");
+        let mut interface_tested = 0usize;
+        let mut interface_valid = 0usize;
+        while let Some(joined) = tasks.join_next().await {
+            let result = joined.context("proxy validation task failed")?;
+            tested += 1;
+            interface_tested += 1;
+            if result.valid() {
+                valid += 1;
+                interface_valid += 1;
+                if let (Some(writer), Some(metrics)) =
+                    (valid_output.as_mut(), result.metrics.as_ref())
+                {
+                    let normalized = result.proxy.normalized(metrics.protocol);
+                    if valid_written.insert(normalized.clone()) {
+                        writer.write_all(format!("{normalized}\n").as_bytes()).await?;
+                    }
+                }
+            }
+
+            store.insert_result(interface_run_id, &result)?;
+            output.write_all(result.tsv_row(&target, tester_ip).as_bytes()).await?;
+
+            if tested.is_multiple_of(100) || tested == total_checks {
+                println!("progress: {tested}/{total_checks}, valid checks: {valid}");
+            }
+            if let Some(proxy) = iter.next() {
+                spawn_validation(
+                    &mut tasks,
+                    proxy,
+                    Arc::clone(&shared),
+                    Arc::clone(&target),
+                );
+            }
         }
-        if let Some(proxy) = iter.next() {
-            spawn_validation(&mut tasks, proxy, Arc::clone(&shared));
-        }
+
+        println!(
+            "interface {} complete: tested={interface_tested}, valid={interface_valid}, invalid={}",
+            target.label(),
+            interface_tested.saturating_sub(interface_valid)
+        );
     }
 
     output.flush().await?;
     if let Some(writer) = valid_output.as_mut() {
         writer.flush().await?;
     }
+    store.finish_run(run_id, valid, tested.saturating_sub(valid))?;
+
     println!(
-        "batch complete: tested={tested}, valid={valid}, invalid={}, tsv={}",
+        "batch complete: tested={tested}, valid={valid}, invalid={}, tsv={}, sqlite={}",
         tested.saturating_sub(valid),
-        shared.output.as_str()
+        shared.output,
+        shared.database
     );
     Ok(())
+}
+
+fn validate_options(options: &BatchOptions) -> Result<()> {
+    if options.proxy_files.is_empty()
+        && options.source_lists.is_empty()
+        && options.source_urls.is_empty()
+    {
+        return Err(anyhow!("batch mode requires --proxy-file, --source-list, or --source-url"));
+    }
+    if options.concurrency == 0 {
+        return Err(anyhow!("--concurrency must be greater than zero"));
+    }
+    if options.timeout_secs == 0 {
+        return Err(anyhow!("--timeout must be greater than zero"));
+    }
+    ensure_distinct_artifact_paths(
+        &options.output,
+        options.valid_output.as_deref(),
+        &options.database,
+    )
 }
 
 fn redact_source(value: &str) -> String {
@@ -331,19 +393,38 @@ fn redact_source(value: &str) -> String {
     url.to_string()
 }
 
-fn ensure_distinct_output_paths(output: &str, valid_output: Option<&str>) -> Result<()> {
-    let Some(valid_output) = valid_output else {
-        return Ok(());
-    };
-    let output = normalized_output_path(output)?;
-    let valid_output = normalized_output_path(valid_output)?;
-    if output == valid_output {
-        return Err(anyhow!("--output and --valid-output must refer to different files"));
+fn ensure_distinct_artifact_paths(
+    output: &str,
+    valid_output: Option<&str>,
+    database: &str,
+) -> Result<()> {
+    let mut artifacts = vec![
+        ("--output", normalized_output_path(output)?),
+        ("--database", normalized_output_path(database)?),
+    ];
+    if let Some(valid_output) = valid_output {
+        artifacts.push(("--valid-output", normalized_output_path(valid_output)?));
+    }
+
+    for left in 0..artifacts.len() {
+        for right in (left + 1)..artifacts.len() {
+            if artifacts[left].1 == artifacts[right].1 {
+                return Err(anyhow!(
+                    "{} and {} must refer to different files",
+                    artifacts[left].0,
+                    artifacts[right].0
+                ));
+            }
+        }
     }
     Ok(())
 }
 
 fn normalized_output_path(value: &str) -> Result<PathBuf> {
+    if value == ":memory:" {
+        return Ok(PathBuf::from(":memory:"));
+    }
+
     let path = Path::new(value);
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -377,9 +458,12 @@ fn normalized_output_path(value: &str) -> Result<PathBuf> {
 }
 
 fn spawn_validation(
-    tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
+    tasks: &mut JoinSet<BatchResult>,
+    proxy: ProxySpec,
+    options: Arc<BatchOptions>,
+    target: Arc<interface::InterfaceTarget>,
 ) {
-    tasks.spawn(async move { validate::validate_proxy(proxy, &options).await });
+    tasks.spawn(async move { validate::validate_proxy(proxy, &options, &target).await });
 }
 
 fn tsv_escape(value: &str) -> String {
@@ -389,7 +473,7 @@ fn tsv_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_distinct_output_paths, redact_source, tsv_escape, ProxyProtocol, ProxySpec,
+        ensure_distinct_artifact_paths, redact_source, tsv_escape, ProxyProtocol, ProxySpec,
     };
 
     #[test]
@@ -421,8 +505,20 @@ mod tests {
 
     #[test]
     fn rejects_equivalent_output_paths() {
-        let err = ensure_distinct_output_paths("proxy-results.tsv", Some("./proxy-results.tsv"))
-            .unwrap_err();
+        let err = ensure_distinct_artifact_paths(
+            "proxy-results.tsv",
+            Some("./proxy-results.tsv"),
+            "proxy-socks-test.sqlite3",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("different files"));
+    }
+
+    #[test]
+    fn rejects_database_output_collision() {
+        let err =
+            ensure_distinct_artifact_paths("./results.tsv", None, "results.tsv").unwrap_err();
+        assert!(err.to_string().contains("--output"));
+        assert!(err.to_string().contains("--database"));
     }
 }
