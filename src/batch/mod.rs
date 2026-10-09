@@ -280,7 +280,7 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         }
         output.write_all(result.tsv_row(tester_ip).as_bytes()).await?;
 
-        if tested % 100 == 0 || tested == total {
+        if tested.is_multiple_of(100) || tested == total {
             println!("progress: {tested}/{total}, valid: {valid}");
         }
         if let Some(proxy) = iter.next() {
@@ -305,10 +305,7 @@ fn spawn_validation(tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options:
 }
 
 fn tsv_escape(value: &str) -> String {
-    value
-        .replace('\t', " ")
-        .replace('\r', " ")
-        .replace('\n', " ")
+    value.replace(['\t', '\r', '\n'], " ")
 }
 
 #[cfg(test)]

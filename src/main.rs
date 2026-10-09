@@ -482,7 +482,7 @@ async fn socks5_udp_test(
         let datatmp = udp.recv_udp_data(5).await?;
         debuginfo!("socks5_udp_test recv_udp_data len {} success!", datatmp.1.len());
         data.extend(datatmp.1);
-        if data.len() >= udp_data.as_bytes().len() {
+        if data.len() >= udp_data.len() {
             break;
         }
     }
