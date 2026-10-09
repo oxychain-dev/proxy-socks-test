@@ -240,8 +240,7 @@ mod tests {
 
     #[test]
     fn strips_brackets_from_ipv6_literal() {
-        let proxy =
-            parse_proxy_spec("[2001:db8::1]:1080", "test", ProxyProtocol::Socks5).unwrap();
+        let proxy = parse_proxy_spec("[2001:db8::1]:1080", "test", ProxyProtocol::Socks5).unwrap();
         assert_eq!(proxy.host, "2001:db8::1");
         assert_eq!(proxy.port, 1080);
     }
