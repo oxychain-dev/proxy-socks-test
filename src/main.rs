@@ -706,7 +706,7 @@ async fn run_tcp_echo_server(ip: &str, port: u16) -> Result<()> {
 fn parse_args() -> clap::ArgMatches {
     clap::Command::new("proxy-socks-test")
         .arg_required_else_help(true)
-        .version("1.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .arg(
             clap::Arg::new("proxyip")
                 .long("proxyip")
@@ -807,6 +807,29 @@ fn parse_args() -> clap::ArgMatches {
                 .help("optionally write valid normalized proxies, one per line"),
         )
         .arg(
+            clap::Arg::new("database")
+                .long("database")
+                .value_name("path")
+                .default_value("proxy-socks-test.sqlite3")
+                .help("persist batch runs and results to SQLite"),
+        )
+        .arg(
+            clap::Arg::new("interface")
+                .long("interface")
+                .value_name("name")
+                .action(clap::ArgAction::Append)
+                .conflicts_with("all-interfaces")
+                .help("bind validation traffic to this network interface; repeat to test several"),
+        )
+        .arg(
+            clap::Arg::new("all-interfaces")
+                .long("all-interfaces")
+                .num_args(0)
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with("interface")
+                .help("test every usable non-loopback network interface independently"),
+        )
+        .arg(
             clap::Arg::new("protocol")
                 .long("protocol")
                 .value_name("protocol")
@@ -875,6 +898,11 @@ async fn main() -> Result<()> {
         .get_many::<String>("source-url")
         .map(|values| values.cloned().collect::<Vec<_>>())
         .unwrap_or_default();
+    let interfaces = matches
+        .get_many::<String>("interface")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let all_interfaces = matches.get_flag("all-interfaces");
     let batch_mode = !proxy_files.is_empty() || !source_lists.is_empty() || !source_urls.is_empty();
 
     if batch_mode {
@@ -895,6 +923,9 @@ async fn main() -> Result<()> {
             source_urls,
             output: matches.get_one::<String>("output").expect("output").clone(),
             valid_output: matches.get_one::<String>("valid-output").cloned(),
+            database: matches.get_one::<String>("database").expect("database").clone(),
+            interfaces,
+            all_interfaces,
             default_protocol: matches.get_one::<String>("protocol").expect("protocol").clone(),
             concurrency,
             timeout_secs,
