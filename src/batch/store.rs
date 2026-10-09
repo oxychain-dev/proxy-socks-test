@@ -1,6 +1,4 @@
-use super::{
-    interface::InterfaceTarget, BatchOptions, BatchResult, IpMetadata, StageResult,
-};
+use super::{interface::InterfaceTarget, BatchOptions, BatchResult, IpMetadata, StageResult};
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{named_params, params, Connection};
 use std::{path::Path, time::Duration};
@@ -166,10 +164,7 @@ impl Store {
     }
 
     pub(super) fn start_run(
-        &self,
-        options: &BatchOptions,
-        proxy_count: usize,
-        interface_count: usize,
+        &self, options: &BatchOptions, proxy_count: usize, interface_count: usize,
     ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO runs(
@@ -196,10 +191,7 @@ impl Store {
     }
 
     pub(super) fn start_interface_run(
-        &self,
-        run_id: i64,
-        target: &InterfaceTarget,
-        tester_ip: Option<std::net::IpAddr>,
+        &self, run_id: i64, target: &InterfaceTarget, tester_ip: Option<std::net::IpAddr>,
     ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO interface_runs(run_id, interface_name, local_ips, tester_ip)
@@ -214,21 +206,13 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub(super) fn insert_result(
-        &self,
-        interface_run_id: i64,
-        result: &BatchResult,
-    ) -> Result<()> {
+    pub(super) fn insert_result(&self, interface_run_id: i64, result: &BatchResult) -> Result<()> {
         let metrics = result.metrics.as_ref();
         let detected_protocol = metrics.map(|m| m.protocol.to_string());
         let latency_ms = metrics.map(|m| u128_to_i64(m.validation_latency_ms));
         let latency_samples_ms = metrics
             .map(|m| {
-                m.latency_samples_ms
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
+                m.latency_samples_ms.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
             })
             .unwrap_or_default();
         let exit_ip = metrics.map(|m| m.exit_ip.to_string());
@@ -323,12 +307,7 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn finish_run(
-        &self,
-        run_id: i64,
-        valid: usize,
-        invalid: usize,
-    ) -> Result<()> {
+    pub(super) fn finish_run(&self, run_id: i64, valid: usize, invalid: usize) -> Result<()> {
         self.conn.execute(
             "UPDATE runs
              SET completed_at = CURRENT_TIMESTAMP, valid_count = ?2, invalid_count = ?3
@@ -340,8 +319,7 @@ impl Store {
 }
 
 fn metadata_field<'a>(
-    metadata: Option<&'a IpMetadata>,
-    getter: impl FnOnce(&'a IpMetadata) -> Option<&'a str>,
+    metadata: Option<&'a IpMetadata>, getter: impl FnOnce(&'a IpMetadata) -> Option<&'a str>,
 ) -> Option<&'a str> {
     metadata.and_then(getter)
 }
@@ -376,9 +354,7 @@ fn set_private_permissions(path: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::{
-        ProbeMetrics, ProxyProtocol, ProxySpec, StageResult,
-    };
+    use crate::batch::{ProbeMetrics, ProxyProtocol, ProxySpec, StageResult};
     use std::net::{IpAddr, Ipv4Addr};
 
     fn options() -> BatchOptions {

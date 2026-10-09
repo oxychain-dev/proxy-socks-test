@@ -175,17 +175,11 @@ impl BatchResult {
         let tested_ip = self.tested_ip.map(|ip| ip.to_string()).unwrap_or_default();
         let endpoint_connect_ms =
             self.endpoint_connect_ms.map(|value| value.to_string()).unwrap_or_default();
-        let validation_latency_ms = self
-            .metrics
-            .as_ref()
-            .map(|m| m.validation_latency_ms.to_string())
-            .unwrap_or_default();
+        let validation_latency_ms =
+            self.metrics.as_ref().map(|m| m.validation_latency_ms.to_string()).unwrap_or_default();
         let exit_ip = self.metrics.as_ref().map(|m| m.exit_ip.to_string()).unwrap_or_default();
-        let exit_changed = self
-            .metrics
-            .as_ref()
-            .map(|m| m.exit_ip_changed.to_string())
-            .unwrap_or_default();
+        let exit_changed =
+            self.metrics.as_ref().map(|m| m.exit_ip_changed.to_string()).unwrap_or_default();
         let endpoint_info = self.endpoint_ip_info.as_ref();
         let exit_info = self.metrics.as_ref().and_then(|m| m.exit_ip_info.as_ref());
 
@@ -231,7 +225,6 @@ impl BatchResult {
         )
     }
 }
-
 
 #[derive(Default)]
 struct SummaryAccumulator {
@@ -318,11 +311,7 @@ where
     if counts.is_empty() {
         return "-".to_owned();
     }
-    counts
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join(",")
+    counts.iter().map(|(key, value)| format!("{key}={value}")).collect::<Vec<_>>().join(",")
 }
 
 fn summary_percentile(values: &[f64], percentile: f64) -> Option<f64> {
@@ -623,11 +612,8 @@ fn normalized_output_path(value: &str) -> Result<PathBuf> {
 }
 
 fn spawn_validation(
-    tasks: &mut JoinSet<BatchResult>,
-    proxy: ProxySpec,
-    options: Arc<BatchOptions>,
-    target: Arc<interface::InterfaceTarget>,
-    enrichment_cache: validate::IpInfoCache,
+    tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
+    target: Arc<interface::InterfaceTarget>, enrichment_cache: validate::IpInfoCache,
 ) {
     tasks.spawn(async move {
         validate::validate_proxy(proxy, &options, &target, enrichment_cache).await

@@ -33,8 +33,7 @@ pub(super) fn new_ip_info_cache() -> IpInfoCache {
 }
 
 pub(super) async fn detect_tester_ip(
-    options: &BatchOptions,
-    target: &InterfaceTarget,
+    options: &BatchOptions, target: &InterfaceTarget,
 ) -> Result<IpAddr> {
     let builder = Client::builder()
         .no_proxy()
@@ -47,18 +46,12 @@ pub(super) async fn detect_tester_ip(
 }
 
 pub(super) async fn validate_proxy(
-    proxy: ProxySpec,
-    options: &BatchOptions,
-    target: &InterfaceTarget,
+    proxy: ProxySpec, options: &BatchOptions, target: &InterfaceTarget,
     enrichment_cache: IpInfoCache,
 ) -> BatchResult {
     let profile =
         TestProfile::parse(&options.profile).expect("batch profile validated before task spawn");
-    let mut stages = vec![StageResult::pass(
-        0,
-        "parse_deduplicate",
-        Duration::ZERO,
-    )];
+    let mut stages = vec![StageResult::pass(0, "parse_deduplicate", Duration::ZERO)];
 
     let resolve_started = Instant::now();
     let resolved_ips = match resolve_all_ips(&proxy.host, proxy.port, options.timeout_secs).await {
@@ -143,11 +136,7 @@ pub(super) async fn validate_proxy(
                 };
             }
         };
-    stages.push(StageResult::pass(
-        2,
-        "tcp_reachability",
-        connect_started.elapsed(),
-    ));
+    stages.push(StageResult::pass(2, "tcp_reachability", connect_started.elapsed()));
 
     let protocols: &[ProxyProtocol] = match proxy.protocol {
         ProxyProtocol::Auto if proxy.username.is_some() => &[ProxyProtocol::Socks5],
@@ -180,12 +169,7 @@ pub(super) async fn validate_proxy(
             validation_started.elapsed(),
             &message,
         ));
-        append_skipped_stages(
-            &mut stages,
-            4,
-            profile,
-            "gated by proxy validation failure",
-        );
+        append_skipped_stages(&mut stages, 4, profile, "gated by proxy validation failure");
         return BatchResult {
             proxy,
             resolved_ips,
@@ -198,31 +182,19 @@ pub(super) async fn validate_proxy(
             error: Some(message),
         };
     };
-    stages.push(StageResult::pass(
-        3,
-        "proxy_http_validation",
-        validation_started.elapsed(),
-    ));
+    stages.push(StageResult::pass(3, "proxy_http_validation", validation_started.elapsed()));
 
     let reverse_dns = reverse_lookup(tested_ip, options.timeout_secs).await;
-    let endpoint_ip_info = fetch_ip_metadata(
-        tested_ip,
-        options,
-        target,
-        Arc::clone(&enrichment_cache),
-    )
-    .await
-    .ok()
-    .flatten();
-    let exit_ip_info = fetch_ip_metadata(
-        probe.exit_ip,
-        options,
-        target,
-        Arc::clone(&enrichment_cache),
-    )
-    .await
-    .ok()
-    .flatten();
+    let endpoint_ip_info =
+        fetch_ip_metadata(tested_ip, options, target, Arc::clone(&enrichment_cache))
+            .await
+            .ok()
+            .flatten();
+    let exit_ip_info =
+        fetch_ip_metadata(probe.exit_ip, options, target, Arc::clone(&enrichment_cache))
+            .await
+            .ok()
+            .flatten();
 
     let mut metrics = ProbeMetrics {
         protocol: probe.protocol,
@@ -259,11 +231,7 @@ pub(super) async fn validate_proxy(
         metrics.exit_ip_changed = seen_exit_ips.len() > 1;
 
         if latency_errors.is_empty() {
-            stages.push(StageResult::pass(
-                4,
-                "latency_jitter",
-                latency_started.elapsed(),
-            ));
+            stages.push(StageResult::pass(4, "latency_jitter", latency_started.elapsed()));
         } else {
             stages.push(StageResult::partial(
                 4,
@@ -278,11 +246,7 @@ pub(super) async fn validate_proxy(
             ));
         }
     } else {
-        stages.push(StageResult::skip(
-            4,
-            "latency_jitter",
-            "not enabled by basic profile",
-        ));
+        stages.push(StageResult::skip(4, "latency_jitter", "not enabled by basic profile"));
     }
 
     if profile.includes_stage(5) {
@@ -304,11 +268,7 @@ pub(super) async fn validate_proxy(
             )),
         }
     } else {
-        stages.push(StageResult::skip(
-            5,
-            "download_throughput",
-            "not enabled by selected profile",
-        ));
+        stages.push(StageResult::skip(5, "download_throughput", "not enabled by selected profile"));
     }
 
     if profile.includes_stage(6) {
@@ -316,11 +276,7 @@ pub(super) async fn validate_proxy(
         match upload_benchmark(&probe.client, options).await {
             Ok(mbps) => {
                 metrics.upload_mbps = Some(mbps);
-                stages.push(StageResult::pass(
-                    6,
-                    "upload_throughput",
-                    upload_started.elapsed(),
-                ));
+                stages.push(StageResult::pass(6, "upload_throughput", upload_started.elapsed()));
             }
             Err(err) => stages.push(StageResult::fail(
                 6,
@@ -330,11 +286,7 @@ pub(super) async fn validate_proxy(
             )),
         }
     } else {
-        stages.push(StageResult::skip(
-            6,
-            "upload_throughput",
-            "not enabled by selected profile",
-        ));
+        stages.push(StageResult::skip(6, "upload_throughput", "not enabled by selected profile"));
     }
 
     BatchResult {
@@ -351,10 +303,7 @@ pub(super) async fn validate_proxy(
 }
 
 async fn probe_protocol(
-    proxy: &ProxySpec,
-    tested_ip: IpAddr,
-    protocol: ProxyProtocol,
-    options: &BatchOptions,
+    proxy: &ProxySpec, tested_ip: IpAddr, protocol: ProxyProtocol, options: &BatchOptions,
     target: &InterfaceTarget,
 ) -> Result<ProtocolProbe> {
     let proxy_url = proxy.proxy_url(protocol, tested_ip)?;
@@ -386,10 +335,7 @@ async fn resolve_all_ips(host: &str, port: u16, timeout_secs: u64) -> Result<Vec
         .await
         .map_err(|_| anyhow!("DNS lookup timed out"))??;
     let mut seen = HashSet::new();
-    let ips = resolved
-        .map(|addr| addr.ip())
-        .filter(|ip| seen.insert(*ip))
-        .collect::<Vec<_>>();
+    let ips = resolved.map(|addr| addr.ip()).filter(|ip| seen.insert(*ip)).collect::<Vec<_>>();
 
     if ips.is_empty() {
         return Err(anyhow!("DNS lookup returned no addresses"));
@@ -399,21 +345,13 @@ async fn resolve_all_ips(host: &str, port: u16, timeout_secs: u64) -> Result<Vec
 
 fn select_tested_ip(resolved_ips: &[IpAddr], target: &InterfaceTarget) -> Result<IpAddr> {
     if target.name.is_none() {
-        return resolved_ips
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow!("no resolved proxy address"));
+        return resolved_ips.first().copied().ok_or_else(|| anyhow!("no resolved proxy address"));
     }
 
     resolved_ips
         .iter()
         .copied()
-        .find(|remote| {
-            target
-                .local_ips
-                .iter()
-                .any(|local| same_address_family(*local, *remote))
-        })
+        .find(|remote| target.local_ips.iter().any(|local| same_address_family(*local, *remote)))
         .ok_or_else(|| {
             anyhow!(
                 "proxy resolved addresses do not match any address family on interface {}",
@@ -423,10 +361,7 @@ fn select_tested_ip(resolved_ips: &[IpAddr], target: &InterfaceTarget) -> Result
 }
 
 async fn tcp_connect_latency(
-    ip: IpAddr,
-    port: u16,
-    target: &InterfaceTarget,
-    timeout_secs: u64,
+    ip: IpAddr, port: u16, target: &InterfaceTarget, timeout_secs: u64,
 ) -> Result<u128> {
     let socket = match ip {
         IpAddr::V4(_) => TcpSocket::new_v4()?,
@@ -446,20 +381,14 @@ async fn tcp_connect_latency(
     }
 
     let started = Instant::now();
-    timeout(
-        Duration::from_secs(timeout_secs),
-        socket.connect(SocketAddr::new(ip, port)),
-    )
-    .await
-    .map_err(|_| anyhow!("TCP connect timed out"))??;
+    timeout(Duration::from_secs(timeout_secs), socket.connect(SocketAddr::new(ip, port)))
+        .await
+        .map_err(|_| anyhow!("TCP connect timed out"))??;
     Ok(started.elapsed().as_millis())
 }
 
 fn same_address_family(left: IpAddr, right: IpAddr) -> bool {
-    matches!(
-        (left, right),
-        (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_))
-    )
+    matches!((left, right), (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_)))
 }
 
 async fn reverse_lookup(ip: IpAddr, timeout_secs: u64) -> Option<String> {
@@ -472,10 +401,7 @@ async fn reverse_lookup(ip: IpAddr, timeout_secs: u64) -> Option<String> {
 }
 
 async fn fetch_ip_metadata(
-    ip: IpAddr,
-    options: &BatchOptions,
-    target: &InterfaceTarget,
-    cache: IpInfoCache,
+    ip: IpAddr, options: &BatchOptions, target: &InterfaceTarget, cache: IpInfoCache,
 ) -> Result<Option<IpMetadata>> {
     let Some(template) = options.ip_info_url_template.as_deref() else {
         return Ok(None);
@@ -599,18 +525,12 @@ fn jitter_ms(samples: &[u128]) -> Option<f64> {
     if samples.len() < 2 {
         return None;
     }
-    let total = samples
-        .windows(2)
-        .map(|pair| pair[0].abs_diff(pair[1]) as f64)
-        .sum::<f64>();
+    let total = samples.windows(2).map(|pair| pair[0].abs_diff(pair[1]) as f64).sum::<f64>();
     Some(total / (samples.len() - 1) as f64)
 }
 
 fn append_skipped_stages(
-    stages: &mut Vec<StageResult>,
-    start_stage: u8,
-    profile: TestProfile,
-    gate_reason: &str,
+    stages: &mut Vec<StageResult>, start_stage: u8, profile: TestProfile, gate_reason: &str,
 ) {
     for stage in start_stage..=6 {
         let reason = if profile.includes_stage(stage) {
@@ -657,10 +577,8 @@ mod tests {
             name: Some("test0".into()),
             local_ips: vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))],
         };
-        let resolved = vec![
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-        ];
+        let resolved =
+            vec![IpAddr::V6(Ipv6Addr::LOCALHOST), IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))];
         assert_eq!(
             select_tested_ip(&resolved, &target).unwrap(),
             IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))

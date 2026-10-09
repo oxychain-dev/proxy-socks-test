@@ -78,10 +78,7 @@ impl StageResult {
     }
 
     pub(super) fn partial(
-        stage: u8,
-        name: &'static str,
-        duration: Duration,
-        error: impl Into<String>,
+        stage: u8, name: &'static str, duration: Duration, error: impl Into<String>,
     ) -> Self {
         Self {
             stage,
@@ -93,10 +90,7 @@ impl StageResult {
     }
 
     pub(super) fn fail(
-        stage: u8,
-        name: &'static str,
-        duration: Duration,
-        error: impl Into<String>,
+        stage: u8, name: &'static str, duration: Duration, error: impl Into<String>,
     ) -> Self {
         Self {
             stage,
