@@ -6,7 +6,7 @@
 
 ## Current Focus
 
-* [~] **Phase 1 / v0.2.0 — secure interface-aware validation + SQLite foundation**
+* [x] **Phase 1 / v0.2.0 — secure interface-aware validation + SQLite foundation**
   * [~] Close current correctness/security defects before extending the probe engine.
 
 ## Next
@@ -22,27 +22,27 @@
   * [x] Add regression tests for all three defects.
   * **Verify:** GitHub Actions run 37919598208 passed fmt/check/test/clippy/build, controlled SOCKS smoke, and diff validation.
 
-* [ ] Add explicit network-interface selection.
-  * [ ] `--interface <name>` repeatable for one or more selected interfaces.
-  * [ ] `--all-interfaces` to enumerate usable non-loopback interfaces and test each independently.
-  * [ ] Record interface name, local address/family, and tester public IP per interface.
-  * [ ] Bind HTTP/proxy traffic to the selected interface on supported platforms; fail clearly when an interface cannot be bound.
-  * [ ] Preserve current unbound/default-route behavior when no interface option is supplied.
-  * **Verify:** unit tests for selection/filtering plus loopback-controlled integration coverage on Linux.
+* [x] Add explicit network-interface selection.
+  * [x] `--interface <name>` repeatable for one or more selected interfaces.
+  * [x] `--all-interfaces` to enumerate usable non-loopback interfaces and test each independently.
+  * [x] Record interface name, local address/family, and tester public IP per interface.
+  * [x] Bind HTTP/proxy traffic to the selected interface on supported platforms; fail clearly when an interface cannot be bound.
+  * [x] Preserve current unbound/default-route behavior when no interface option is supplied.
+  * **Verify:** GitHub Actions run 37920331362 passed interface unit tests and Linux loopback-bound controlled smoke.
 
-* [ ] Replace TSV-as-primary-state with SQLite as the durable run store.
-  * [ ] Default database path is `./proxy-socks-test.sqlite3` in the current working directory.
-  * [ ] Create schema/version metadata and idempotent migrations.
-  * [ ] Store runs, interfaces, redacted proxy identity, endpoint resolution, stage results, metrics, and errors.
-  * [ ] Enable WAL/busy-timeout/foreign-keys and create useful indexes.
-  * [ ] Create the database with restrictive local permissions where supported.
-  * [ ] Keep optional immediate TSV/valid-list compatibility exports.
-  * **Verify:** database integration test validates schema, inserts, indexes/constraints, and report-safe credential handling.
+* [x] Replace TSV-as-primary-state with SQLite as the durable run store.
+  * [x] Default database path is `./proxy-socks-test.sqlite3` in the current working directory.
+  * [x] Create schema/version metadata and idempotent migrations.
+  * [x] Store runs, interfaces, redacted proxy identity, endpoint resolution, stage results, metrics, and errors.
+  * [x] Enable WAL/busy-timeout/foreign-keys and create useful indexes.
+  * [x] Create the database with restrictive local permissions where supported.
+  * [x] Keep optional immediate TSV/valid-list compatibility exports.
+  * **Verify:** GitHub Actions run 37920331362 passed SQLite schema/persistence/redaction unit tests and controlled smoke.
 
-* [ ] Align CLI/package versioning and help text for v0.2.0.
-  * [ ] Remove hard-coded Clap `1.0` version drift and use Cargo package version.
-  * [ ] Document v0.2.0 as the first interface-aware/SQLite-capable release.
-  * **Verify:** `--version` matches Cargo metadata and CLI help spot-check is coherent.
+* [x] Align CLI/package versioning and help text for v0.2.0.
+  * [x] Remove hard-coded Clap `1.0` version drift and use Cargo package version.
+  * [x] Document v0.2.0 as the first interface-aware/SQLite-capable release.
+  * **Verify:** GitHub Actions run 37920331362 confirmed `proxy-socks-test --version` = `proxy-socks-test 0.2.0` and passed check/test/clippy/build.
 
 #### Phase 2 / v0.3.0 — Staged diagnostic and performance pipeline
 
@@ -141,7 +141,7 @@
 
 ## Discovered During Work
 
-* [ ] Confirm the exact reqwest interface-binding API used by the locked dependency during compilation and keep a source-IP fallback for unsupported platforms.
+* [x] Confirmed locked reqwest interface binding by successful Linux compilation/smoke; implementation uses `ClientBuilder::interface` on supported OSes and local-address fallback elsewhere.
 * [ ] Evaluate database growth/retention controls before v0.4.0 service mode is declared complete.
 
 ## Completed
