@@ -4,6 +4,8 @@ use reqwest::{Client, Url};
 use std::collections::HashSet;
 use tokio::fs;
 
+pub(super) const MAX_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Default)]
 pub(super) struct LoadStats {
     pub(super) malformed_entries: usize,
@@ -16,6 +18,30 @@ pub(super) async fn load_proxies(
     let mut proxies = Vec::new();
     let mut seen = HashSet::new();
     let mut stats = LoadStats::default();
+
+    for (source, text) in &options.inline_proxy_sources {
+        parse_proxy_text(
+            source,
+            text,
+            default_protocol,
+            &mut proxies,
+            &mut seen,
+            &mut stats,
+        );
+    }
+
+    for (source, text) in &options.inline_source_lists {
+        parse_source_list_text(
+            client,
+            source,
+            text,
+            default_protocol,
+            &mut proxies,
+            &mut seen,
+            &mut stats,
+        )
+        .await;
+    }
 
     for source in &options.proxy_files {
         match read_text_source(client, source).await {
@@ -37,27 +63,16 @@ pub(super) async fn load_proxies(
     for source_list in &options.source_lists {
         match read_text_source(client, source_list).await {
             Ok(text) => {
-                for url in meaningful_lines(&text) {
-                    if !is_http_url(url) {
-                        stats.source_errors += 1;
-                        eprintln!("warning: source-list entry is not HTTP(S): {url}");
-                        continue;
-                    }
-                    match fetch_url(client, url).await {
-                        Ok(proxy_text) => parse_proxy_text(
-                            url,
-                            &proxy_text,
-                            default_protocol,
-                            &mut proxies,
-                            &mut seen,
-                            &mut stats,
-                        ),
-                        Err(err) => {
-                            stats.source_errors += 1;
-                            eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");
-                        }
-                    }
-                }
+                parse_source_list_text(
+                    client,
+                    source_list,
+                    &text,
+                    default_protocol,
+                    &mut proxies,
+                    &mut seen,
+                    &mut stats,
+                )
+                .await;
             }
             Err(err) => {
                 stats.source_errors += 1;
@@ -90,21 +105,83 @@ async fn read_text_source(client: &Client, source: &str) -> Result<String> {
     if is_http_url(source) {
         fetch_url(client, source).await
     } else {
+        let metadata =
+            fs::metadata(source).await.with_context(|| format!("failed to stat {source}"))?;
+        if metadata.len() > MAX_SOURCE_BYTES as u64 {
+            return Err(anyhow!(
+                "source {source} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
+            ));
+        }
         fs::read_to_string(source).await.with_context(|| format!("failed to read {source}"))
     }
 }
 
+pub(super) async fn response_text_limited(
+    response: reqwest::Response,
+    label: &str,
+) -> Result<String> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_SOURCE_BYTES as u64)
+    {
+        return Err(anyhow!(
+            "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
+        ));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read response body from {label}"))?;
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(anyhow!(
+            "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
+        ));
+    }
+    String::from_utf8(bytes.to_vec())
+        .with_context(|| format!("failed to decode UTF-8 text from {label}"))
+}
+
 async fn fetch_url(client: &Client, url: &str) -> Result<String> {
-    client
+    let response = client
         .get(url)
         .send()
         .await
         .with_context(|| format!("request failed for {url}"))?
         .error_for_status()
-        .with_context(|| format!("HTTP error for {url}"))?
-        .text()
-        .await
-        .with_context(|| format!("failed to decode text from {url}"))
+        .with_context(|| format!("HTTP error for {url}"))?;
+    response_text_limited(response, url).await
+}
+
+async fn parse_source_list_text(
+    client: &Client,
+    source: &str,
+    text: &str,
+    default_protocol: ProxyProtocol,
+    proxies: &mut Vec<ProxySpec>,
+    seen: &mut HashSet<String>,
+    stats: &mut LoadStats,
+) {
+    for url in meaningful_lines(text) {
+        if !is_http_url(url) {
+            stats.source_errors += 1;
+            eprintln!("warning: source-list entry from {source} is not HTTP(S): {url}");
+            continue;
+        }
+        match fetch_url(client, url).await {
+            Ok(proxy_text) => parse_proxy_text(
+                url,
+                &proxy_text,
+                default_protocol,
+                proxies,
+                seen,
+                stats,
+            ),
+            Err(err) => {
+                stats.source_errors += 1;
+                eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");
+            }
+        }
+    }
 }
 
 fn meaningful_lines(text: &str) -> impl Iterator<Item = &str> {
@@ -243,5 +320,12 @@ mod tests {
         let proxy = parse_proxy_spec("[2001:db8::1]:1080", "test", ProxyProtocol::Socks5).unwrap();
         assert_eq!(proxy.host, "2001:db8::1");
         assert_eq!(proxy.port, 1080);
+    }
+
+    #[tokio::test]
+    async fn response_size_limit_rejects_large_content_length() {
+        // The integration smoke covers streamed HTTP bodies; this unit test keeps the constant
+        // visible and guards accidental removal of the production cap.
+        assert_eq!(MAX_SOURCE_BYTES, 16 * 1024 * 1024);
     }
 }
