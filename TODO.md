@@ -5,7 +5,7 @@
 
 ## Current Focus
 
-* [~] Replace the deprecated rustfmt `fn_args_layout` key without changing formatting behavior.
+* [x] Deprecated rustfmt layout configuration was replaced and fully re-verified.
 
 ## Next
 
@@ -22,8 +22,8 @@
 
 ### P2 — Normal / Cleanup
 
-* [~] Review the deprecated `fn_args_layout` rustfmt setting separately from feature work.
-  * **Verify:** Any replacement preserves the repository's compressed function-parameter formatting and standard checks remain green.
+* [x] Review the deprecated `fn_args_layout` rustfmt setting separately from feature work.
+  * **Verify:** `fn_params_layout = "Compressed"` passed format/check/test/clippy/build plus the controlled SOCKS smoke fixture on GitHub Actions run 37914061059.
 
 ## Blocked
 
@@ -59,3 +59,5 @@
 * [x] Added permanent `tests/batch_smoke.py` using only Python standard-library local fixtures.
 * [x] Verified controlled SOCKS4/SOCKS4a/SOCKS5 end-to-end probing, all three ingestion modes, TSV assertions, and normalized valid output on GitHub Actions run 37913857913.
 * [x] Removed the temporary protocol-verification workflow after successful verification.
+* [x] Replaced deprecated `fn_args_layout` with `fn_params_layout` while preserving `Compressed` behavior.
+* [x] Verified rustfmt cleanup on GitHub Actions run 37914061059 and removed its temporary workflow.
