@@ -1,0 +1,49 @@
+name: Temporary Cargo lockfile verification
+
+on:
+  push:
+    branches:
+      - feature/proxy-list-validation
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+      - name: Install lint components
+        run: rustup component add rustfmt clippy
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Cargo check locked
+        run: cargo check --locked --all-targets
+      - name: Unit tests locked
+        run: cargo test --locked --all-targets
+      - name: Clippy locked
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build binary locked
+        run: cargo build --locked
+      - name: Controlled batch smoke test
+        run: python3 tests/batch_smoke.py target/debug/proxy-socks-test
+      - name: Diff sanity
+        run: git diff --check
+      - name: Commit Cargo.lock
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "build: add Cargo.lock"
+          git push origin HEAD:feature/proxy-list-validation
