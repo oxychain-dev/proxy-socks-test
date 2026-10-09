@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     interface_names TEXT NOT NULL DEFAULT '',
     all_interfaces INTEGER NOT NULL DEFAULT 0 CHECK (all_interfaces IN (0, 1)),
     profile TEXT NOT NULL,
+    default_protocol TEXT NOT NULL DEFAULT 'auto',
     concurrency INTEGER NOT NULL,
     timeout_seconds INTEGER NOT NULL,
     check_url TEXT NOT NULL,
