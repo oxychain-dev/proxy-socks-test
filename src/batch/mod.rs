@@ -336,7 +336,19 @@ fn format_optional_metric(value: Option<f64>) -> String {
     value.map(|value| format!("{value:.3}")).unwrap_or_else(|| "-".to_owned())
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct BatchRunOutcome {
+    pub(super) run_id: i64,
+    pub(super) proxy_count: usize,
+    pub(super) tested: usize,
+    pub(super) valid: usize,
+}
+
 pub async fn run_batch(options: BatchOptions) -> Result<()> {
+    run_batch_with_outcome(options).await.map(|_| ())
+}
+
+pub(super) async fn run_batch_with_outcome(options: BatchOptions) -> Result<BatchRunOutcome> {
     validate_options(&options)?;
 
     let check_url = Url::parse(&options.check_url).context("invalid --check-url")?;
@@ -502,7 +514,12 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
         shared.database
     );
     overall_summary.print("overall");
-    Ok(())
+    Ok(BatchRunOutcome {
+        run_id,
+        proxy_count: proxies.len(),
+        tested,
+        valid,
+    })
 }
 
 fn validate_options(options: &BatchOptions) -> Result<()> {
