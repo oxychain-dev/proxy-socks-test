@@ -316,7 +316,6 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     Ok(())
 }
 
-
 fn redact_source(value: &str) -> String {
     let Ok(mut url) = Url::parse(value) else {
         return value.to_owned();
@@ -364,8 +363,9 @@ fn normalized_output_path(value: &str) -> Result<PathBuf> {
     }
 
     if normalized.exists() {
-        return std::fs::canonicalize(&normalized)
-            .with_context(|| format!("failed to canonicalize output path {}", normalized.display()));
+        return std::fs::canonicalize(&normalized).with_context(|| {
+            format!("failed to canonicalize output path {}", normalized.display())
+        });
     }
 
     if let (Some(parent), Some(name)) = (normalized.parent(), normalized.file_name()) {
@@ -421,8 +421,8 @@ mod tests {
 
     #[test]
     fn rejects_equivalent_output_paths() {
-        let err =
-            ensure_distinct_output_paths("proxy-results.tsv", Some("./proxy-results.tsv")).unwrap_err();
+        let err = ensure_distinct_output_paths("proxy-results.tsv", Some("./proxy-results.tsv"))
+            .unwrap_err();
         assert!(err.to_string().contains("different files"));
     }
 }
