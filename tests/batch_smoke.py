@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import ipaddress
+import select
 import socket
 import socketserver
 import subprocess
@@ -18,7 +19,6 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterable
 
 
 LOOPBACK_IP = "127.0.0.1"
@@ -52,7 +52,7 @@ def relay(client: socket.socket, upstream: socket.socket) -> None:
         sock.settimeout(30)
 
     while True:
-        readable, _, _ = __import__("select").select(sockets, (), (), 30)
+        readable, _, _ = select.select(sockets, (), (), 30)
         if not readable:
             return
         for source in readable:
