@@ -2,6 +2,7 @@ mod input;
 mod interface;
 mod model;
 mod store;
+mod subscription;
 mod validate;
 
 use anyhow::{anyhow, Context, Result};
@@ -334,6 +335,22 @@ fn average(values: &[f64]) -> Option<f64> {
 
 fn format_optional_metric(value: Option<f64>) -> String {
     value.map(|value| format!("{value:.3}")).unwrap_or_else(|| "-".to_owned())
+}
+
+pub async fn run_subscription_command(
+    matches: &clap::ArgMatches,
+    database: &str,
+) -> Result<()> {
+    subscription::handle_subscription_command(matches, database).await
+}
+
+pub async fn run_service(
+    database: &str,
+    poll_seconds: u64,
+    retention_days: u64,
+    once: bool,
+) -> Result<()> {
+    subscription::run_service(database, poll_seconds, retention_days, once).await
 }
 
 #[derive(Clone, Copy, Debug)]
