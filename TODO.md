@@ -5,36 +5,23 @@
 
 ## Current Focus
 
-* [~] Finish verification of batch proxy-list validation on `feature/proxy-list-validation`.
-  * [ ] Apply repository rustfmt output; current CI run failed at `cargo fmt --all -- --check`.
-  * [ ] Run `cargo check --all-targets`.
-  * [ ] Run `cargo test --all-targets`.
-  * [ ] Run `cargo clippy --all-targets -- -D warnings`.
-  * [ ] Remove the temporary verification workflow after checks are captured.
-  * **Verify:** GitHub Actions passes format/check/test/clippy for the batch implementation, and the final PR diff contains no temporary CI file.
+* [x] Batch proxy-list ingestion, validation, TSV export, and requested IP reporting are implemented and verified for PR #1.
 
 ## Next
 
 ### P0 — Critical
 
-* [ ] Reconcile PR #1 verification state after CI passes.
-  * [ ] Update the PR description with executed checks and their results.
-  * [ ] Re-inspect `main...feature/proxy-list-validation` for unintended files or changes.
-  * **Verify:** PR description matches actual checks and final diff.
+* No open critical tasks for the requested batch proxy-list feature.
 
 ### P1 — Important
 
-* [ ] Perform a batch-mode smoke test with representative inputs when an allowed live SOCKS fixture is available.
-  * [ ] Exercise a direct proxy-list URL.
-  * [ ] Exercise a local proxy file.
-  * [ ] Exercise a source-list file containing proxy-list URLs.
-  * [ ] Confirm TSV columns include `tester_ip`, `tested_ip`, and `exit_ip`.
-  * **Verify:** At least one controlled valid proxy produces a successful TSV row and invalid input produces a bounded failure/error row.
+* [ ] Add controlled SOCKS4/SOCKS4a end-to-end fixtures if future changes touch protocol-specific probing.
+  * **Verify:** SOCKS4 and SOCKS4a batch probes pass against controlled local fixtures and preserve the documented TSV contract.
 
 ### P2 — Normal / Cleanup
 
-* [ ] Review the deprecated `fn_args_layout` rustfmt setting separately from the feature work.
-  * **Verify:** Any configuration change preserves the repository's intended compressed function-parameter formatting and does not alter behavior.
+* [ ] Review the deprecated `fn_args_layout` rustfmt setting separately from feature work.
+  * **Verify:** Any replacement preserves the repository's compressed function-parameter formatting and standard checks remain green.
 
 ## Blocked
 
@@ -48,9 +35,22 @@
 ## Completed
 
 * [x] Added batch proxy ingestion from local files/URLs, source-list files/URLs, and direct proxy-list URLs.
-* [x] Added proxy parsing/deduplication for SOCKS4, SOCKS4a, SOCKS5, and SOCKS5-auth forms.
+* [x] Added proxy parsing and deduplication for SOCKS4, SOCKS4a, SOCKS5, and SOCKS5-auth forms.
 * [x] Added bounded concurrent proxy validation with configurable timeout and IP-check endpoint.
-* [x] Added TSV output with tester/origin IP, tested proxy endpoint IP, proxy egress IP, latency, validity, and error fields.
+* [x] Added TSV output with `tester_ip`, resolved proxy `tested_ip`, proxy `exit_ip`, latency, validity, and error fields.
 * [x] Added optional normalized valid-proxy output.
 * [x] Preserved the existing legacy single-proxy CLI path and documented batch mode.
-* [x] Opened Draft PR #1 for the feature branch.
+* [x] Added repository-level `AGENTS.md` and this persistent `TODO.md`.
+* [x] Applied repository rustfmt output.
+* [x] Verified `cargo check --all-targets` on GitHub Actions run 37903316157.
+* [x] Verified `cargo test --all-targets` on GitHub Actions run 37903316157.
+* [x] Verified `cargo clippy --all-targets -- -D warnings` on GitHub Actions run 37903316157.
+* [x] Verified `git diff --check` on GitHub Actions run 37903316157.
+* [x] Verified an end-to-end SOCKS5 batch smoke test on GitHub Actions run 37903316157 using:
+  * a local proxy file,
+  * a direct proxy-list URL,
+  * a remote source-list URL,
+  * TSV assertions for the documented columns and valid proxy row,
+  * normalized `valid-output` assertion.
+* [x] Removed the temporary verification workflow after recording the successful checks.
+* [x] Opened PR #1 for the feature branch.
