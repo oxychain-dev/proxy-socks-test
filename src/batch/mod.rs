@@ -3,7 +3,13 @@ mod validate;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::{Client, Url};
-use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
+use std::{
+    env, fmt,
+    net::IpAddr,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     fs,
     io::{AsyncWriteExt, BufWriter},
@@ -109,6 +115,24 @@ impl ProxySpec {
         Ok(url)
     }
 
+    pub(super) fn report_input(&self) -> String {
+        let host = if self.host.contains(':') && !self.host.starts_with('[') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        let scheme = if self.raw.contains("://") {
+            format!("{}://", self.protocol.scheme())
+        } else {
+            String::new()
+        };
+        format!("{scheme}{host}:{}", self.port)
+    }
+
+    pub(super) fn report_source(&self) -> String {
+        redact_source(&self.source)
+    }
+
     pub(super) fn normalized(&self, protocol: ProxyProtocol) -> String {
         let host = if self.host.contains(':') && !self.host.starts_with('[') {
             format!("[{}]", self.host)
@@ -158,8 +182,8 @@ impl BatchResult {
 
         format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-            tsv_escape(&self.proxy.source),
-            tsv_escape(&self.proxy.raw),
+            tsv_escape(&self.proxy.report_source()),
+            tsv_escape(&self.proxy.report_input()),
             tester_ip,
             protocol,
             tsv_escape(&self.proxy.host),
@@ -186,6 +210,8 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     if options.timeout_secs == 0 {
         return Err(anyhow!("--timeout must be greater than zero"));
     }
+    ensure_distinct_output_paths(&options.output, options.valid_output.as_deref())?;
+
     let check_url = Url::parse(&options.check_url).context("invalid --check-url")?;
     if !matches!(check_url.scheme(), "http" | "https") {
         return Err(anyhow!("--check-url must use http:// or https://"));
@@ -290,6 +316,66 @@ pub async fn run_batch(options: BatchOptions) -> Result<()> {
     Ok(())
 }
 
+
+fn redact_source(value: &str) -> String {
+    let Ok(mut url) = Url::parse(value) else {
+        return value.to_owned();
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return value.to_owned();
+    }
+
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
+fn ensure_distinct_output_paths(output: &str, valid_output: Option<&str>) -> Result<()> {
+    let Some(valid_output) = valid_output else {
+        return Ok(());
+    };
+    let output = normalized_output_path(output)?;
+    let valid_output = normalized_output_path(valid_output)?;
+    if output == valid_output {
+        return Err(anyhow!("--output and --valid-output must refer to different files"));
+    }
+    Ok(())
+}
+
+fn normalized_output_path(value: &str) -> Result<PathBuf> {
+    let path = Path::new(value);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().context("failed to determine current directory")?.join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    if normalized.exists() {
+        return std::fs::canonicalize(&normalized)
+            .with_context(|| format!("failed to canonicalize output path {}", normalized.display()));
+    }
+
+    if let (Some(parent), Some(name)) = (normalized.parent(), normalized.file_name()) {
+        if let Ok(parent) = std::fs::canonicalize(parent) {
+            return Ok(parent.join(name));
+        }
+    }
+    Ok(normalized)
+}
+
 fn spawn_validation(
     tasks: &mut JoinSet<BatchResult>, proxy: ProxySpec, options: Arc<BatchOptions>,
 ) {
@@ -302,10 +388,41 @@ fn tsv_escape(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::tsv_escape;
+    use super::{
+        ensure_distinct_output_paths, redact_source, tsv_escape, ProxyProtocol, ProxySpec,
+    };
 
     #[test]
     fn escapes_tsv_control_characters() {
         assert_eq!(tsv_escape("a\tb\nc"), "a b c");
+    }
+
+    #[test]
+    fn report_input_never_exposes_proxy_credentials() {
+        let proxy = ProxySpec {
+            raw: "socks5://user:secret@example.com:1080".to_owned(),
+            source: "test".to_owned(),
+            host: "example.com".to_owned(),
+            port: 1080,
+            username: Some("user".to_owned()),
+            password: Some("secret".to_owned()),
+            protocol: ProxyProtocol::Socks5,
+        };
+        assert_eq!(proxy.report_input(), "socks5://example.com:1080");
+        assert!(!proxy.report_input().contains("user"));
+        assert!(!proxy.report_input().contains("secret"));
+    }
+
+    #[test]
+    fn source_url_redacts_userinfo_query_and_fragment() {
+        let value = redact_source("https://user:secret@example.com/list.txt?token=abc#frag");
+        assert_eq!(value, "https://example.com/list.txt");
+    }
+
+    #[test]
+    fn rejects_equivalent_output_paths() {
+        let err =
+            ensure_distinct_output_paths("proxy-results.tsv", Some("./proxy-results.tsv")).unwrap_err();
+        assert!(err.to_string().contains("different files"));
     }
 }
