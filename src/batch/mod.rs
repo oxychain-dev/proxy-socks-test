@@ -5,9 +5,7 @@ mod store;
 mod validate;
 
 use anyhow::{anyhow, Context, Result};
-pub(super) use model::{
-    BatchResult, IpMetadata, ProbeMetrics, StageResult, StageStatus, TestProfile,
-};
+use model::{BatchResult, IpMetadata, ProbeMetrics, StageResult, TestProfile};
 use reqwest::{Client, Url};
 use std::{
     collections::HashSet,
@@ -415,7 +413,7 @@ fn validate_options(options: &BatchOptions) -> Result<()> {
     }
     if let Some(template) = &options.ip_info_url_template {
         if !template.contains("{ip}") {
-            return Err(anyhow!("--ip-info-url-template must contain {ip}"));
+            return Err(anyhow!("--ip-info-url-template must contain {{ip}}"));
         }
         validate_http_url(&template.replace("{ip}", "127.0.0.1"), "--ip-info-url-template")?;
     }
