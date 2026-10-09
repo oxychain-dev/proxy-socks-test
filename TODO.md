@@ -5,7 +5,7 @@
 
 ## Current Focus
 
-* [~] Add controlled SOCKS4/SOCKS4a end-to-end fixtures and verify protocol-specific batch probing.
+* [x] Controlled SOCKS4/SOCKS4a/SOCKS5 end-to-end batch fixtures are implemented and verified.
 
 ## Next
 
@@ -15,10 +15,10 @@
 
 ### P1 — Important
 
-* [~] Add controlled SOCKS4/SOCKS4a end-to-end fixtures.
-  * [ ] Add a self-contained local fixture that exercises SOCKS4, SOCKS4a, and SOCKS5 without external proxy dependencies.
-  * [ ] Verify local file, direct URL, and source-list ingestion against the controlled fixture.
-  * **Verify:** SOCKS4 and SOCKS4a batch probes pass against controlled local fixtures and preserve the documented TSV contract.
+* [x] Add controlled SOCKS4/SOCKS4a end-to-end fixtures.
+  * [x] Added a self-contained local fixture that exercises SOCKS4, SOCKS4a, and SOCKS5 without external proxy dependencies.
+  * [x] Verified local file, direct URL, and source-list ingestion against the controlled fixture.
+  * **Verify:** GitHub Actions run 37913857913 passed the controlled protocol smoke test and preserved the documented TSV contract.
 
 ### P2 — Normal / Cleanup
 
@@ -56,3 +56,6 @@
   * normalized `valid-output` assertion.
 * [x] Removed the temporary verification workflow after recording the successful checks.
 * [x] Opened PR #1 for the feature branch.
+* [x] Added permanent `tests/batch_smoke.py` using only Python standard-library local fixtures.
+* [x] Verified controlled SOCKS4/SOCKS4a/SOCKS5 end-to-end probing, all three ingestion modes, TSV assertions, and normalized valid output on GitHub Actions run 37913857913.
+* [x] Removed the temporary protocol-verification workflow after successful verification.
