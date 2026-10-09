@@ -177,7 +177,12 @@ fn parse_proxy_spec(raw: &str, source: &str, default_protocol: ProxyProtocol) ->
     };
 
     let url = Url::parse(&url_text).with_context(|| format!("invalid proxy entry: {raw}"))?;
-    let host = url.host_str().ok_or_else(|| anyhow!("proxy host is missing: {raw}"))?.to_owned();
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("proxy host is missing: {raw}"))?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_owned();
     let port = url.port().ok_or_else(|| anyhow!("proxy port is missing: {raw}"))?;
     let username = (!url.username().is_empty()).then(|| url.username().to_owned());
     let password = url.password().map(str::to_owned);
@@ -231,5 +236,13 @@ mod tests {
     #[test]
     fn rejects_http_proxy_scheme() {
         assert!(parse_proxy_spec("http://1.2.3.4:8080", "test", ProxyProtocol::Auto).is_err());
+    }
+
+    #[test]
+    fn strips_brackets_from_ipv6_literal() {
+        let proxy =
+            parse_proxy_spec("[2001:db8::1]:1080", "test", ProxyProtocol::Socks5).unwrap();
+        assert_eq!(proxy.host, "2001:db8::1");
+        assert_eq!(proxy.port, 1080);
     }
 }
