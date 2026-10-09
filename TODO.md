@@ -5,7 +5,7 @@
 
 ## Current Focus
 
-* [x] Batch proxy-list ingestion, validation, TSV export, and requested IP reporting are implemented and verified for PR #1.
+* [~] Add controlled SOCKS4/SOCKS4a end-to-end fixtures and verify protocol-specific batch probing.
 
 ## Next
 
@@ -15,7 +15,9 @@
 
 ### P1 — Important
 
-* [ ] Add controlled SOCKS4/SOCKS4a end-to-end fixtures if future changes touch protocol-specific probing.
+* [~] Add controlled SOCKS4/SOCKS4a end-to-end fixtures.
+  * [ ] Add a self-contained local fixture that exercises SOCKS4, SOCKS4a, and SOCKS5 without external proxy dependencies.
+  * [ ] Verify local file, direct URL, and source-list ingestion against the controlled fixture.
   * **Verify:** SOCKS4 and SOCKS4a batch probes pass against controlled local fixtures and preserve the documented TSV contract.
 
 ### P2 — Normal / Cleanup
