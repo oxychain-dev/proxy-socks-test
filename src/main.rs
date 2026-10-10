@@ -74,6 +74,8 @@
 //!
 //! The source code is available on [GitHub](https://github.com/oxychain-dev/proxy-socks-test).
 //!
+mod batch;
+
 use anyhow::{anyhow, Result};
 use colored::Colorize;
 use libsocks_client::SocksClientBuilder;
@@ -480,7 +482,7 @@ async fn socks5_udp_test(
         let datatmp = udp.recv_udp_data(5).await?;
         debuginfo!("socks5_udp_test recv_udp_data len {} success!", datatmp.1.len());
         data.extend(datatmp.1);
-        if data.len() >= udp_data.as_bytes().len() {
+        if data.len() >= udp_data.len() {
             break;
         }
     }
@@ -701,30 +703,206 @@ async fn run_tcp_echo_server(ip: &str, port: u16) -> Result<()> {
     }
 }
 
+fn subscription_command() -> clap::Command {
+    let add = clap::Command::new("add")
+        .about("add a periodically tested proxy subscription")
+        .arg(clap::Arg::new("name").long("name").required(true).value_name("name"))
+        .arg(clap::Arg::new("url").long("url").required(true).value_name("url"))
+        .arg(
+            clap::Arg::new("source-type")
+                .long("source-type")
+                .value_parser(["proxy-list", "source-list"])
+                .default_value("proxy-list"),
+        )
+        .arg(
+            clap::Arg::new("interval-seconds")
+                .long("interval-seconds")
+                .default_value("3600")
+                .value_name("seconds"),
+        )
+        .arg(
+            clap::Arg::new("interface")
+                .long("interface")
+                .value_name("name")
+                .action(clap::ArgAction::Append)
+                .conflicts_with("all-interfaces"),
+        )
+        .arg(
+            clap::Arg::new("all-interfaces")
+                .long("all-interfaces")
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with("interface"),
+        )
+        .arg(
+            clap::Arg::new("profile")
+                .long("profile")
+                .value_parser(["basic", "standard", "full"])
+                .default_value("standard"),
+        )
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_parser(["auto", "socks4", "socks4a", "socks5"])
+                .default_value("auto"),
+        )
+        .arg(clap::Arg::new("concurrency").long("concurrency").default_value("100"))
+        .arg(clap::Arg::new("timeout").long("timeout").default_value("10"))
+        .arg(clap::Arg::new("check-url").long("check-url").default_value("https://api.ipify.org"))
+        .arg(clap::Arg::new("latency-samples").long("latency-samples").default_value("3"))
+        .arg(
+            clap::Arg::new("download-url")
+                .long("download-url")
+                .default_value("https://speed.cloudflare.com/__down?bytes={bytes}"),
+        )
+        .arg(
+            clap::Arg::new("upload-url")
+                .long("upload-url")
+                .default_value("https://speed.cloudflare.com/__up"),
+        )
+        .arg(clap::Arg::new("download-bytes").long("download-bytes").default_value("1048576"))
+        .arg(clap::Arg::new("upload-bytes").long("upload-bytes").default_value("262144"))
+        .arg(
+            clap::Arg::new("ip-info-url-template")
+                .long("ip-info-url-template")
+                .value_name("url-template"),
+        )
+        .arg(
+            clap::Arg::new("disabled")
+                .long("disabled")
+                .action(clap::ArgAction::SetTrue)
+                .help("create the subscription disabled"),
+        );
+
+    let id_command = |name: &'static str, about: &'static str| {
+        clap::Command::new(name)
+            .about(about)
+            .arg(clap::Arg::new("id").long("id").required(true).value_name("id"))
+    };
+
+    clap::Command::new("subscription")
+        .about("manage persistent proxy-list subscriptions")
+        .subcommand_required(true)
+        .subcommand(add)
+        .subcommand(clap::Command::new("list").about("list subscriptions using redacted sources"))
+        .subcommand(id_command("show", "show one subscription without exposing source secrets"))
+        .subcommand(id_command("enable", "enable a subscription"))
+        .subcommand(id_command("disable", "disable a subscription"))
+        .subcommand(id_command("remove", "remove a subscription"))
+        .subcommand(id_command("run", "run one subscription immediately"))
+}
+
+fn export_command() -> clap::Command {
+    let tsv = clap::Command::new("tsv")
+        .about("export stored SQLite proxy checks as TSV without re-testing")
+        .arg(clap::Arg::new("output").long("output").required(true).value_name("path"))
+        .arg(clap::Arg::new("run-id").long("run-id").value_name("id"))
+        .arg(clap::Arg::new("subscription-id").long("subscription-id").value_name("id"))
+        .arg(clap::Arg::new("interface").long("interface").value_name("name"))
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_parser(["socks4", "socks4a", "socks5"])
+                .value_name("protocol"),
+        )
+        .arg(
+            clap::Arg::new("valid")
+                .long("valid")
+                .value_parser(["true", "false"])
+                .value_name("bool"),
+        )
+        .arg(
+            clap::Arg::new("since")
+                .long("since")
+                .value_name("datetime")
+                .help("filter runs starting on/after a SQLite-compatible UTC date/time"),
+        )
+        .arg(
+            clap::Arg::new("until")
+                .long("until")
+                .value_name("datetime")
+                .help("filter runs starting on/before a SQLite-compatible UTC date/time"),
+        );
+
+    let valid = clap::Command::new("valid")
+        .about("export credential-free valid proxy links from a stored run")
+        .arg(clap::Arg::new("run-id").long("run-id").required(true).value_name("id"))
+        .arg(clap::Arg::new("output").long("output").required(true).value_name("path"))
+        .arg(clap::Arg::new("interface").long("interface").value_name("name"))
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_parser(["socks4", "socks4a", "socks5"])
+                .value_name("protocol"),
+        );
+
+    clap::Command::new("export")
+        .about("export stored SQLite results without network tests")
+        .subcommand_required(true)
+        .subcommand(tsv)
+        .subcommand(valid)
+}
+
+fn report_command() -> clap::Command {
+    clap::Command::new("report")
+        .about("print a professional report for the latest or selected SQLite run")
+        .arg(clap::Arg::new("run-id").long("run-id").value_name("id"))
+        .arg(
+            clap::Arg::new("limit")
+                .long("limit")
+                .default_value("10")
+                .value_name("count")
+                .help("maximum number of ranked valid proxies to show"),
+        )
+}
+
+fn service_command() -> clap::Command {
+    clap::Command::new("service")
+        .about("run due enabled subscriptions until a shutdown signal")
+        .arg(
+            clap::Arg::new("poll-seconds")
+                .long("poll-seconds")
+                .default_value("5")
+                .value_name("seconds"),
+        )
+        .arg(
+            clap::Arg::new("retention-days")
+                .long("retention-days")
+                .default_value("30")
+                .value_name("days")
+                .help("delete historical run data older than this; 0 disables retention"),
+        )
+        .arg(
+            clap::Arg::new("once")
+                .long("once")
+                .action(clap::ArgAction::SetTrue)
+                .help("process currently due subscriptions once, then exit"),
+        )
+}
+
 fn parse_args() -> clap::ArgMatches {
     clap::Command::new("proxy-socks-test")
         .arg_required_else_help(true)
-        .version("1.0")
+        .version(env!("CARGO_PKG_VERSION"))
         .arg(
             clap::Arg::new("proxyip")
                 .long("proxyip")
                 .value_name("ipaddress")
                 .help("set proxy ipaddress")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("proxyport")
                 .long("proxyport")
                 .value_name("port")
                 .help("set proxy port")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("serverip")
                 .long("serverip")
                 .value_name("ipaddress")
                 .help("set proxy test running host ipaddress,default use 0.0.0.0")
-                .required(true),
+                .required(false),
         )
         .arg(
             clap::Arg::new("serverport")
@@ -768,8 +946,154 @@ fn parse_args() -> clap::ArgMatches {
                     "socks5_auth_udp",
                 ])
                 .hide_possible_values(false)
-                .required(true),
+                .required(false),
         )
+        .arg(
+            clap::Arg::new("proxy-file")
+                .long("proxy-file")
+                .value_name("path-or-url")
+                .action(clap::ArgAction::Append)
+                .help("read proxy entries from a local file or HTTP(S) URL"),
+        )
+        .arg(
+            clap::Arg::new("source-list")
+                .long("source-list")
+                .value_name("path-or-url")
+                .action(clap::ArgAction::Append)
+                .help("read a file/URL whose non-comment lines are proxy-list URLs"),
+        )
+        .arg(
+            clap::Arg::new("source-url")
+                .long("source-url")
+                .value_name("url")
+                .action(clap::ArgAction::Append)
+                .help("download proxy entries directly from an HTTP(S) URL"),
+        )
+        .arg(
+            clap::Arg::new("output")
+                .long("output")
+                .value_name("path")
+                .default_value("proxy-results.tsv")
+                .help("write batch validation results as TSV"),
+        )
+        .arg(
+            clap::Arg::new("no-tsv")
+                .long("no-tsv")
+                .action(clap::ArgAction::SetTrue)
+                .help("persist to SQLite without writing the immediate TSV file"),
+        )
+        .arg(
+            clap::Arg::new("valid-output")
+                .long("valid-output")
+                .value_name("path")
+                .help("optionally write valid normalized proxies, one per line"),
+        )
+        .arg(
+            clap::Arg::new("database")
+                .long("database")
+                .value_name("path")
+                .default_value("proxy-socks-test.sqlite3")
+                .global(true)
+                .help("persist batch, subscription, and service state to SQLite"),
+        )
+        .arg(
+            clap::Arg::new("interface")
+                .long("interface")
+                .value_name("name")
+                .action(clap::ArgAction::Append)
+                .conflicts_with("all-interfaces")
+                .help("bind validation traffic to this network interface; repeat to test several"),
+        )
+        .arg(
+            clap::Arg::new("all-interfaces")
+                .long("all-interfaces")
+                .num_args(0)
+                .action(clap::ArgAction::SetTrue)
+                .conflicts_with("interface")
+                .help("test every usable non-loopback network interface independently"),
+        )
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_name("protocol")
+                .value_parser(["auto", "socks4", "socks4a", "socks5"])
+                .default_value("auto")
+                .help("default protocol for entries without a scheme"),
+        )
+        .arg(
+            clap::Arg::new("concurrency")
+                .long("concurrency")
+                .value_name("count")
+                .default_value("100")
+                .help("maximum concurrent proxy checks"),
+        )
+        .arg(
+            clap::Arg::new("timeout")
+                .long("timeout")
+                .value_name("seconds")
+                .default_value("10")
+                .help("per-proxy request timeout in seconds"),
+        )
+        .arg(
+            clap::Arg::new("check-url")
+                .long("check-url")
+                .value_name("url")
+                .default_value("https://api.ipify.org")
+                .help("HTTP(S) endpoint that returns the caller IP as plain text"),
+        )
+        .arg(
+            clap::Arg::new("profile")
+                .long("profile")
+                .value_name("profile")
+                .value_parser(["basic", "standard", "full"])
+                .default_value("standard")
+                .help("staged test profile: basic=validity, standard=latency/jitter, full=plus speed tests"),
+        )
+        .arg(
+            clap::Arg::new("latency-samples")
+                .long("latency-samples")
+                .value_name("count")
+                .default_value("3")
+                .help("HTTP latency samples for standard/full profiles"),
+        )
+        .arg(
+            clap::Arg::new("download-url")
+                .long("download-url")
+                .value_name("url-template")
+                .default_value("https://speed.cloudflare.com/__down?bytes={bytes}")
+                .help("full-profile download URL; {bytes} is replaced with the configured byte budget"),
+        )
+        .arg(
+            clap::Arg::new("upload-url")
+                .long("upload-url")
+                .value_name("url")
+                .default_value("https://speed.cloudflare.com/__up")
+                .help("full-profile HTTP POST upload endpoint"),
+        )
+        .arg(
+            clap::Arg::new("download-bytes")
+                .long("download-bytes")
+                .value_name("bytes")
+                .default_value("1048576")
+                .help("maximum requested download benchmark payload"),
+        )
+        .arg(
+            clap::Arg::new("upload-bytes")
+                .long("upload-bytes")
+                .value_name("bytes")
+                .default_value("262144")
+                .help("upload benchmark payload size"),
+        )
+        .arg(
+            clap::Arg::new("ip-info-url-template")
+                .long("ip-info-url-template")
+                .value_name("url-template")
+                .help("optional JSON IP-enrichment URL containing {ip}; enrichment never affects validity"),
+        )
+        .subcommand(subscription_command())
+        .subcommand(service_command())
+        .subcommand(export_command())
+        .subcommand(report_command())
         .arg(
             clap::Arg::new("debug")
                 .long("debug")
@@ -797,18 +1121,136 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
     let matches = parse_args();
+    let database = matches.get_one::<String>("database").expect("database").clone();
 
-    let proxyip = matches.get_one::<String>("proxyip").expect("proxyip").clone();
+    match matches.subcommand() {
+        Some(("subscription", subscription_matches)) => {
+            return batch::run_subscription_command(subscription_matches, &database).await;
+        }
+        Some(("service", service_matches)) => {
+            let poll_seconds = service_matches
+                .get_one::<String>("poll-seconds")
+                .expect("poll-seconds")
+                .parse::<u64>()
+                .map_err(|err| anyhow!("invalid --poll-seconds: {err}"))?;
+            let retention_days = service_matches
+                .get_one::<String>("retention-days")
+                .expect("retention-days")
+                .parse::<u64>()
+                .map_err(|err| anyhow!("invalid --retention-days: {err}"))?;
+            return batch::run_service(
+                &database,
+                poll_seconds,
+                retention_days,
+                service_matches.get_flag("once"),
+            )
+            .await;
+        }
+        Some(("export", export_matches)) => {
+            return batch::run_export_command(export_matches, &database);
+        }
+        Some(("report", report_matches)) => {
+            return batch::run_report_command(report_matches, &database);
+        }
+        _ => {}
+    }
+
+    let proxy_files = matches
+        .get_many::<String>("proxy-file")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let source_lists = matches
+        .get_many::<String>("source-list")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let source_urls = matches
+        .get_many::<String>("source-url")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let interfaces = matches
+        .get_many::<String>("interface")
+        .map(|values| values.cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let all_interfaces = matches.get_flag("all-interfaces");
+    let batch_mode = !proxy_files.is_empty() || !source_lists.is_empty() || !source_urls.is_empty();
+
+    if batch_mode {
+        let concurrency = matches
+            .get_one::<String>("concurrency")
+            .expect("concurrency")
+            .parse::<usize>()
+            .map_err(|err| anyhow!("invalid --concurrency: {err}"))?;
+        let timeout_secs = matches
+            .get_one::<String>("timeout")
+            .expect("timeout")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --timeout: {err}"))?;
+        let latency_samples = matches
+            .get_one::<String>("latency-samples")
+            .expect("latency-samples")
+            .parse::<usize>()
+            .map_err(|err| anyhow!("invalid --latency-samples: {err}"))?;
+        let download_bytes = matches
+            .get_one::<String>("download-bytes")
+            .expect("download-bytes")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --download-bytes: {err}"))?;
+        let upload_bytes = matches
+            .get_one::<String>("upload-bytes")
+            .expect("upload-bytes")
+            .parse::<u64>()
+            .map_err(|err| anyhow!("invalid --upload-bytes: {err}"))?;
+
+        return batch::run_batch(batch::BatchOptions {
+            proxy_files,
+            source_lists,
+            source_urls,
+            inline_proxy_sources: Vec::new(),
+            inline_source_lists: Vec::new(),
+            output: matches.get_one::<String>("output").expect("output").clone(),
+            write_tsv: !matches.get_flag("no-tsv"),
+            valid_output: matches.get_one::<String>("valid-output").cloned(),
+            database,
+            interfaces,
+            all_interfaces,
+            default_protocol: matches.get_one::<String>("protocol").expect("protocol").clone(),
+            concurrency,
+            timeout_secs,
+            check_url: matches.get_one::<String>("check-url").expect("check-url").clone(),
+            profile: matches.get_one::<String>("profile").expect("profile").clone(),
+            latency_samples,
+            download_url: matches.get_one::<String>("download-url").expect("download-url").clone(),
+            upload_url: matches.get_one::<String>("upload-url").expect("upload-url").clone(),
+            download_bytes,
+            upload_bytes,
+            ip_info_url_template: matches.get_one::<String>("ip-info-url-template").cloned(),
+            subscription_id: None,
+        })
+        .await;
+    }
+
+    let proxyip = matches
+        .get_one::<String>("proxyip")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --proxyip"))?
+        .clone();
     let proxyipstr: &str = string_to_static_str(proxyip);
 
-    let proxyport = matches.get_one::<String>("proxyport").expect("proxyport").clone();
-    let proxyportint = proxyport.parse::<u16>().unwrap();
+    let proxyport = matches
+        .get_one::<String>("proxyport")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --proxyport"))?
+        .clone();
+    let proxyportint =
+        proxyport.parse::<u16>().map_err(|err| anyhow!("invalid --proxyport: {err}"))?;
 
-    let serverip = matches.get_one::<String>("serverip").expect("serverip").clone();
+    let serverip = matches
+        .get_one::<String>("serverip")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --serverip"))?
+        .clone();
     let serveripstr: &str = string_to_static_str(serverip);
 
     let serverport = matches.get_one::<String>("serverport").expect("serverport").clone();
-    let serverportint = serverport.parse::<u16>().unwrap();
+    let serverportint =
+        serverport.parse::<u16>().map_err(|err| anyhow!("invalid --serverport: {err}"))?;
 
     let authinfo = matches.get_one::<String>("auth").expect("auth").clone();
     init_auth(&authinfo);
@@ -821,7 +1263,10 @@ async fn main() -> Result<()> {
     if debug {
         DEBUG_OPEN.store(true, std::sync::atomic::Ordering::SeqCst);
     }
-    let casename = matches.get_one::<String>("casename").expect("casename").clone();
+    let casename = matches
+        .get_one::<String>("casename")
+        .ok_or_else(|| anyhow!("single-proxy mode requires --casename"))?
+        .clone();
 
     let casenamestr: &str = string_to_static_str(casename);
 

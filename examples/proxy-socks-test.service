@@ -1,0 +1,41 @@
+[Unit]
+Description=proxy-socks-test subscription scheduler
+Documentation=https://github.com/oxychain-dev/proxy-socks-test
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=proxy-socks-test
+Group=proxy-socks-test
+WorkingDirectory=/var/lib/proxy-socks-test
+ExecStart=/usr/local/bin/proxy-socks-test --database /var/lib/proxy-socks-test/proxy-socks-test.sqlite3 service --poll-seconds 5 --retention-days 30
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+
+# The service writes only its SQLite state under WorkingDirectory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proxy-socks-test
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+# Interface-bound subscriptions use SO_BINDTODEVICE through reqwest on Linux.
+# Start without extra capabilities. If the host kernel/security policy returns EPERM
+# for --interface/--all-interfaces, grant only CAP_NET_RAW and keep the bounding set
+# equally narrow:
+#
+# AmbientCapabilities=CAP_NET_RAW
+# CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

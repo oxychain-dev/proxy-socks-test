@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Cargo check
+        run: cargo check --locked --all-targets
+
+      - name: Unit tests
+        run: cargo test --locked --all-targets
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Python fixture syntax
+        run: python3 -m py_compile tests/batch_smoke.py tests/subscription_smoke.py tests/query_smoke.py
+
+      - name: Controlled batch smoke
+        run: python3 tests/batch_smoke.py target/debug/proxy-socks-test
+
+      - name: Controlled subscription/service smoke
+        run: python3 tests/subscription_smoke.py target/debug/proxy-socks-test
+
+      - name: Controlled SQLite query/export/report smoke
+        run: python3 tests/query_smoke.py target/debug/proxy-socks-test
+
+      - name: CLI help and version
+        run: |
+          test "$(target/debug/proxy-socks-test --version)" = "proxy-socks-test 0.5.0"
+          target/debug/proxy-socks-test --help
+          target/debug/proxy-socks-test subscription --help
+          target/debug/proxy-socks-test service --help
+          target/debug/proxy-socks-test export --help
+          target/debug/proxy-socks-test export tsv --help
+          target/debug/proxy-socks-test export valid --help
+          target/debug/proxy-socks-test report --help
+
+      - name: Legacy helper syntax
+        run: |
+          bash -n src/sockstest.sh
+          bash src/sockstest.sh --help
+
+      - name: Verify systemd example
+        run: |
+          sudo groupadd --system proxy-socks-test
+          sudo useradd --system --gid proxy-socks-test --home-dir /var/lib/proxy-socks-test --shell /usr/sbin/nologin proxy-socks-test
+          sudo install -d -o proxy-socks-test -g proxy-socks-test -m 0750 /var/lib/proxy-socks-test
+          sudo ln -sf "$PWD/target/debug/proxy-socks-test" /usr/local/bin/proxy-socks-test
+          systemd-analyze verify examples/proxy-socks-test.service
+
+      - name: Branch diff whitespace check
+        run: git diff --check origin/main...HEAD

@@ -1,66 +1,123 @@
-#!/bin/bash
-RUNDIR=`dirname $0`
-if [ "${RUNDIR:0:1}" != "/" ];then RUNDIR=`pwd`/$RUNDIR;fi
-cd $RUNDIR
-while [[ $# -ge 1 ]]
-do
-    arg=$1
-    if echo $arg |grep -q '\-\-proxyip'
-    then
-	shift
-        proxyip="$1"
-        echo "proxyip $proxyip"
-    elif echo $arg |grep -q '\-\-proxyport'
-    then
-	shift
-	proxyport="$1"
-        echo "proxyport $proxyport"
-    elif echo $arg |grep -q '\-\-serverip'
-    then
-	shift
-        serverip="$1"
-        echo "serverip $serverip"
-    elif echo $arg |grep -q '\-\-auth'
-    then
-	shift
-        auth="$1"
-        echo "auth $auth"
-    elif echo $arg |grep -q '\-\-datasize'
-    then
-	shift
-        echo "datasize $datasize"
-        datasize="--datasize $1"
-    elif echo $arg |grep -q '\-\-debug'
-    then
-	shift
-        debug="--debug"
-        echo "auth $auth"
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUNDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="${RUNDIR}/proxy-socks-test"
+
+proxyip=""
+proxyport=""
+serverip=""
+auth=""
+datasize=""
+debug=false
+
+usage() {
+    cat <<EOF
+Usage:
+  $0 --proxyip <ip> --proxyport <port> --serverip <ip> [--auth <user:pass>] [--datasize <bytes>] [--debug]
+
+This compatibility helper runs the legacy single-proxy SOCKS test cases.
+For batch validation, SQLite persistence, interfaces, subscriptions, exports,
+and reports, invoke proxy-socks-test directly.
+EOF
+}
+
+require_value() {
+    local flag="$1"
+    local value="${2-}"
+    if [[ -z "$value" || "$value" == --* ]]; then
+        echo "error: $flag requires a value" >&2
+        usage >&2
+        exit 2
     fi
-    shift
+}
+
+while (($#)); do
+    case "$1" in
+        --proxyip)
+            require_value "$1" "${2-}"
+            proxyip="$2"
+            shift 2
+            ;;
+        --proxyport)
+            require_value "$1" "${2-}"
+            proxyport="$2"
+            shift 2
+            ;;
+        --serverip)
+            require_value "$1" "${2-}"
+            serverip="$2"
+            shift 2
+            ;;
+        --auth)
+            require_value "$1" "${2-}"
+            auth="$2"
+            shift 2
+            ;;
+        --datasize)
+            require_value "$1" "${2-}"
+            datasize="$2"
+            shift 2
+            ;;
+        --debug)
+            debug=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
 done
-if [ -z $proxyport ] || [ -z $proxyip ] || [ -z $serverip ]
-then
-    echo "example:"
-    echo "$0 --proxyip 10.206.118.122 --proxyport 1080 --serverip 10.206.118.65"
-    echo "example with auth:"
-    echo "$0 --proxyip 10.206.118.122 --proxyport 1080 --serverip 10.206.118.65 --auth user1:user1"
-    exit 0
+
+if [[ -z "$proxyport" || -z "$proxyip" || -z "$serverip" ]]; then
+    usage >&2
+    exit 2
 fi
 
-eval_cmd()
-{
-   echo "$@"
-   eval $@
+if [[ ! -x "$BINARY" ]]; then
+    echo "error: legacy helper expects an executable at $BINARY" >&2
+    echo "Build and copy/symlink the binary there, or invoke proxy-socks-test directly." >&2
+    exit 1
+fi
+
+common=(
+    --proxyip "$proxyip"
+    --proxyport "$proxyport"
+    --serverip "$serverip"
+)
+if [[ -n "$datasize" ]]; then
+    common+=(--datasize "$datasize")
+fi
+if [[ "$debug" == true ]]; then
+    common+=(--debug)
+fi
+
+run_case() {
+    local case_name="$1"
+    printf 'running %s\n' "$case_name"
+    "$BINARY" "${common[@]}" --casename "$case_name"
 }
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_connect $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4a_connect_hostname $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_connect_hostname $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks4_bind $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_bind $datasize $debug
-eval_cmd ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_udp $datasize $debug
-if [ ! -z $auth ]
-then
-    ./proxy-socks-test --proxyip $proxyip --proxyport $proxyport --serverip $serverip --casename socks5_auth_connect --auth $auth $datasize $debug
+
+for case_name in \
+    socks4_connect \
+    socks4a_connect \
+    socks5_connect \
+    socks4a_connect_hostname \
+    socks5_connect_hostname \
+    socks4_bind \
+    socks5_bind \
+    socks5_udp
+do
+    run_case "$case_name"
+done
+
+if [[ -n "$auth" ]]; then
+    printf 'running %s\n' "socks5_auth_connect"
+    "$BINARY" "${common[@]}" --casename socks5_auth_connect --auth "$auth"
 fi
