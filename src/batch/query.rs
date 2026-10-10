@@ -4,7 +4,7 @@ use clap::ArgMatches;
 use rusqlite::{
     params, params_from_iter,
     types::Value,
-    Connection,
+    Connection, OptionalExtension,
 };
 use std::{
     cmp::Ordering,
