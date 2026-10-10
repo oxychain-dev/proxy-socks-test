@@ -48,10 +48,7 @@ pub(super) async fn load_proxies(
             ),
             Err(err) => {
                 stats.source_errors += 1;
-                eprintln!(
-                    "warning: could not read proxy source {}: {err:#}",
-                    source_label(source)
-                );
+                eprintln!("warning: could not read proxy source {}: {err:#}", source_label(source));
             }
         }
     }
@@ -131,15 +128,11 @@ pub(super) async fn response_text_limited(
         .unwrap_or(0)
         .min(MAX_SOURCE_BYTES);
     let mut bytes = Vec::with_capacity(capacity);
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|err| anyhow!("failed to read response body from {label}: {}", http_error_kind(&err)))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|err| {
+        anyhow!("failed to read response body from {label}: {}", http_error_kind(&err))
+    })? {
         if bytes.len().saturating_add(chunk.len()) > MAX_SOURCE_BYTES {
-            return Err(anyhow!(
-                "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
-            ));
+            return Err(anyhow!("source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -190,10 +183,7 @@ async fn parse_source_list_text(
     for url in meaningful_lines(text) {
         if !is_http_url(url) {
             stats.source_errors += 1;
-            eprintln!(
-                "warning: source-list entry from {} is not HTTP(S)",
-                source_label(source)
-            );
+            eprintln!("warning: source-list entry from {} is not HTTP(S)", source_label(source));
             continue;
         }
         match fetch_url(client, url).await {
