@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{named_params, params, Connection};
 use std::{path::Path, time::Duration};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const V1_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -175,6 +175,14 @@ ALTER TABLE subscriptions ADD COLUMN lease_until INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_subscriptions_claim
     ON subscriptions(enabled, next_run_at, lease_until);
 ";
+const V5_MIGRATION: &str = "
+ALTER TABLE proxy_checks ADD COLUMN auth_required INTEGER NOT NULL DEFAULT 0
+    CHECK (auth_required IN (0, 1));
+
+CREATE INDEX IF NOT EXISTS idx_proxy_checks_valid_auth
+    ON proxy_checks(valid, auth_required);
+";
+
 
 pub(super) struct Store {
     conn: Connection,
@@ -246,6 +254,19 @@ impl Store {
                 [],
             )?;
             tx.pragma_update(None, "user_version", 4)?;
+            tx.commit()?;
+            current = 4;
+        }
+
+        if current < 5 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(V5_MIGRATION)?;
+            tx.execute(
+                "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '5')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )?;
+            tx.pragma_update(None, "user_version", 5)?;
             tx.commit()?;
         }
 
@@ -325,7 +346,7 @@ impl Store {
                 endpoint_ip_info_json, endpoint_country, endpoint_region, endpoint_city,
                 endpoint_org, endpoint_asn, endpoint_timezone,
                 exit_ip_info_json, exit_country, exit_region, exit_city,
-                exit_org, exit_asn, exit_timezone
+                exit_org, exit_asn, exit_timezone, auth_required
              ) VALUES (
                 :interface_run_id, :source, :input_redacted, :requested_protocol,
                 :detected_protocol, :proxy_host, :tested_ip, :proxy_port, :valid,
@@ -335,7 +356,7 @@ impl Store {
                 :endpoint_ip_info_json, :endpoint_country, :endpoint_region, :endpoint_city,
                 :endpoint_org, :endpoint_asn, :endpoint_timezone,
                 :exit_ip_info_json, :exit_country, :exit_region, :exit_city,
-                :exit_org, :exit_asn, :exit_timezone
+                :exit_org, :exit_asn, :exit_timezone, :auth_required
              )",
             named_params! {
                 ":interface_run_id": interface_run_id,
@@ -374,6 +395,7 @@ impl Store {
                 ":exit_org": metadata_field(exit_info, |m| m.organization.as_deref()),
                 ":exit_asn": metadata_field(exit_info, |m| m.asn.as_deref()),
                 ":exit_timezone": metadata_field(exit_info, |m| m.timezone.as_deref()),
+                ":auth_required": i64::from(result.proxy.username.is_some()),
             },
         )?;
         let check_id = self.conn.last_insert_rowid();
@@ -548,6 +570,11 @@ mod tests {
         assert_eq!(input, "socks5://example.com:1080");
         assert_eq!(profile, "full");
         assert_eq!(stage_count, 2);
+        let auth_required: i64 = store
+            .conn
+            .query_row("SELECT auth_required FROM proxy_checks LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(auth_required, 1);
         assert!(!source.contains("secret"));
         assert!(!input.contains("secret"));
     }
