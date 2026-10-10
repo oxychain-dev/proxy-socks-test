@@ -8,7 +8,10 @@ use reqwest::{
     Client, StatusCode,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    fmt,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::time::sleep;
 
 const RUN_LEASE_SECONDS: i64 = 6 * 60 * 60;
@@ -82,6 +85,26 @@ struct FetchedSource {
     etag: Option<String>,
     last_modified: Option<String>,
 }
+
+#[derive(Debug)]
+struct FetchFailure {
+    status: Option<u16>,
+    message: String,
+}
+
+impl FetchFailure {
+    fn new(status: Option<u16>, message: impl Into<String>) -> Self {
+        Self { status, message: message.into() }
+    }
+}
+
+impl fmt::Display for FetchFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for FetchFailure {}
 
 impl SubscriptionDb {
     fn open(path: &str) -> Result<Self> {
@@ -469,8 +492,8 @@ async fn run_one(database: &str, db: &SubscriptionDb, subscription: &Subscriptio
     let fetched = match fetch_subscription_source(subscription).await {
         Ok(value) => value,
         Err(err) => {
-            let message = format!("source fetch failed: {err:#}");
-            db.record_failure(subscription, now, None, &message)?;
+            let message = format!("source fetch failed: {err}");
+            db.record_failure(subscription, now, err.status, &message)?;
             return Err(anyhow!(message));
         }
     };
@@ -501,13 +524,15 @@ async fn run_one(database: &str, db: &SubscriptionDb, subscription: &Subscriptio
     }
 }
 
-async fn fetch_subscription_source(subscription: &Subscription) -> Result<FetchedSource> {
+async fn fetch_subscription_source(
+    subscription: &Subscription,
+) -> std::result::Result<FetchedSource, FetchFailure> {
     let client = Client::builder()
         .no_proxy()
         .user_agent(concat!("proxy-socks-test/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(subscription.timeout_seconds.max(15)))
         .build()
-        .context("failed to build subscription source client")?;
+        .map_err(|_| FetchFailure::new(None, "failed to build subscription HTTP client"))?;
 
     let mut request = client.get(&subscription.source_url);
     if let Some(etag) = &subscription.etag {
@@ -517,16 +542,21 @@ async fn fetch_subscription_source(subscription: &Subscription) -> Result<Fetche
         request = request.header(IF_MODIFIED_SINCE, last_modified);
     }
 
-    let response = request.send().await.context("subscription source request failed")?;
+    let response = request
+        .send()
+        .await
+        .map_err(|err| FetchFailure::new(None, describe_request_error(&err)))?;
     let status = response.status();
     let etag = header_text(response.headers().get(ETAG));
     let last_modified = header_text(response.headers().get(LAST_MODIFIED));
 
     if status == StatusCode::NOT_MODIFIED {
-        let payload = subscription
-            .cached_payload
-            .clone()
-            .ok_or_else(|| anyhow!("source returned 304 but no cached payload is available"))?;
+        let payload = subscription.cached_payload.clone().ok_or_else(|| {
+            FetchFailure::new(
+                Some(status.as_u16()),
+                "source returned 304 but no cached payload is available",
+            )
+        })?;
         return Ok(FetchedSource {
             payload,
             http_status: status.as_u16(),
@@ -536,8 +566,21 @@ async fn fetch_subscription_source(subscription: &Subscription) -> Result<Fetche
         });
     }
 
-    let response = response.error_for_status().context("subscription source HTTP error")?;
-    let payload = input::response_text_limited(response, &subscription.source_display).await?;
+    if !status.is_success() {
+        return Err(FetchFailure::new(
+            Some(status.as_u16()),
+            format!("HTTP source request returned status {}", status.as_u16()),
+        ));
+    }
+
+    let payload = input::response_text_limited(response, &subscription.source_display)
+        .await
+        .map_err(|err| {
+            FetchFailure::new(
+                Some(status.as_u16()),
+                format!("source response body rejected: {err}"),
+            )
+        })?;
     Ok(FetchedSource {
         payload,
         http_status: status.as_u16(),
@@ -545,6 +588,20 @@ async fn fetch_subscription_source(subscription: &Subscription) -> Result<Fetche
         etag,
         last_modified,
     })
+}
+
+fn describe_request_error(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "subscription source request timed out"
+    } else if error.is_connect() {
+        "subscription source connection failed"
+    } else if error.is_redirect() {
+        "subscription source redirect policy failed"
+    } else if error.is_request() {
+        "subscription source request could not be constructed or sent"
+    } else {
+        "subscription source request failed"
+    }
 }
 
 fn subscription_batch_options(
@@ -778,6 +835,21 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn request_error_descriptions_do_not_echo_urls() {
+        // URL-bearing reqwest errors are deliberately reduced to category-only text before
+        // persistence or CLI display, so source credentials/query tokens cannot leak.
+        let parsed = reqwest::Url::parse("http://127.0.0.1:1/?token=secret").unwrap();
+        let request = reqwest::Request::new(reqwest::Method::GET, parsed);
+        let client = reqwest::Client::new();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let error = runtime.block_on(client.execute(request)).unwrap_err();
+        let message = describe_request_error(&error);
+        assert!(!message.contains("token"));
+        assert!(!message.contains("secret"));
+        assert!(!message.contains("127.0.0.1"));
+    }
+
     fn backoff_is_bounded_and_exponential() {
         assert_eq!(retry_delay(60, 1), 60);
         assert_eq!(retry_delay(60, 2), 120);
