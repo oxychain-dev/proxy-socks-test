@@ -1,4 +1,4 @@
-use super::{BatchOptions, ProxyProtocol, ProxySpec};
+use super::{redact_source, BatchOptions, ProxyProtocol, ProxySpec};
 use anyhow::{anyhow, Context, Result};
 use reqwest::{Client, Url};
 use std::collections::HashSet;
@@ -48,7 +48,10 @@ pub(super) async fn load_proxies(
             ),
             Err(err) => {
                 stats.source_errors += 1;
-                eprintln!("warning: could not read proxy source {source}: {err:#}");
+                eprintln!(
+                    "warning: could not read proxy source {}: {err:#}",
+                    source_label(source)
+                );
             }
         }
     }
@@ -69,7 +72,10 @@ pub(super) async fn load_proxies(
             }
             Err(err) => {
                 stats.source_errors += 1;
-                eprintln!("warning: could not read source-list {source_list}: {err:#}");
+                eprintln!(
+                    "warning: could not read source-list {}: {err:#}",
+                    source_label(source_list)
+                );
             }
         }
     }
@@ -77,7 +83,7 @@ pub(super) async fn load_proxies(
     for url in &options.source_urls {
         if !is_http_url(url) {
             stats.source_errors += 1;
-            eprintln!("warning: --source-url is not HTTP(S): {url}");
+            eprintln!("warning: --source-url entry is not HTTP(S)");
             continue;
         }
         match fetch_url(client, url).await {
@@ -86,7 +92,10 @@ pub(super) async fn load_proxies(
             }
             Err(err) => {
                 stats.source_errors += 1;
-                eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");
+                eprintln!(
+                    "warning: could not fetch proxy-list URL {}: {err:#}",
+                    redact_source(url)
+                );
             }
         }
     }
@@ -110,31 +119,68 @@ async fn read_text_source(client: &Client, source: &str) -> Result<String> {
 }
 
 pub(super) async fn response_text_limited(
-    response: reqwest::Response, label: &str,
+    mut response: reqwest::Response, label: &str,
 ) -> Result<String> {
     if response.content_length().is_some_and(|size| size > MAX_SOURCE_BYTES as u64) {
         return Err(anyhow!("source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"));
     }
-    let bytes = response
-        .bytes()
+
+    let capacity = response
+        .content_length()
+        .and_then(|size| usize::try_from(size).ok())
+        .unwrap_or(0)
+        .min(MAX_SOURCE_BYTES);
+    let mut bytes = Vec::with_capacity(capacity);
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .with_context(|| format!("failed to read response body from {label}"))?;
-    if bytes.len() > MAX_SOURCE_BYTES {
-        return Err(anyhow!("source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"));
+        .map_err(|err| anyhow!("failed to read response body from {label}: {}", http_error_kind(&err)))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_SOURCE_BYTES {
+            return Err(anyhow!(
+                "source {label} exceeds maximum size of {MAX_SOURCE_BYTES} bytes"
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    String::from_utf8(bytes.to_vec())
-        .with_context(|| format!("failed to decode UTF-8 text from {label}"))
+
+    String::from_utf8(bytes).with_context(|| format!("failed to decode UTF-8 text from {label}"))
 }
 
 async fn fetch_url(client: &Client, url: &str) -> Result<String> {
+    let label = redact_source(url);
     let response = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("request failed for {url}"))?
-        .error_for_status()
-        .with_context(|| format!("HTTP error for {url}"))?;
-    response_text_limited(response, url).await
+        .map_err(|err| anyhow!("request failed for {label}: {}", http_error_kind(&err)))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(anyhow!("HTTP status {} for {label}", status.as_u16()));
+    }
+    response_text_limited(response, &label).await
+}
+
+fn http_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connection failed"
+    } else if error.is_redirect() {
+        "redirect failure"
+    } else if error.is_request() {
+        "request failure"
+    } else {
+        "transport failure"
+    }
+}
+
+fn source_label(source: &str) -> String {
+    if is_http_url(source) {
+        redact_source(source)
+    } else {
+        source.to_owned()
+    }
 }
 
 async fn parse_source_list_text(
@@ -144,7 +190,10 @@ async fn parse_source_list_text(
     for url in meaningful_lines(text) {
         if !is_http_url(url) {
             stats.source_errors += 1;
-            eprintln!("warning: source-list entry from {source} is not HTTP(S): {url}");
+            eprintln!(
+                "warning: source-list entry from {} is not HTTP(S)",
+                source_label(source)
+            );
             continue;
         }
         match fetch_url(client, url).await {
@@ -153,7 +202,10 @@ async fn parse_source_list_text(
             }
             Err(err) => {
                 stats.source_errors += 1;
-                eprintln!("warning: could not fetch proxy-list URL {url}: {err:#}");
+                eprintln!(
+                    "warning: could not fetch proxy-list URL {}: {err:#}",
+                    redact_source(url)
+                );
             }
         }
     }
