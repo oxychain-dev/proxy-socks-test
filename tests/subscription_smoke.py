@@ -51,6 +51,15 @@ class SubscriptionFixtureHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/failure":
+            self.send_response(503)
+            payload = b"fixture unavailable"
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
         if parsed.path == "/source-list":
             type(self).source_list_requests += 1
             self._send_text(
@@ -411,6 +420,83 @@ def run_smoke(binary: Path) -> None:
                 ]
             )
             assert int(db_scalar(database, "SELECT COUNT(*) FROM subscriptions")) == 1
+
+            failure_secret = "failure-secret"
+            failure_id = add_subscription(
+                binary,
+                database,
+                name="failure-fixture",
+                url=(
+                    f"http://{LOOPBACK_IP}:{http_port}/failure"
+                    f"?token={failure_secret}"
+                ),
+                interval_seconds=60,
+                check_url=check_url,
+            )
+            failure = subprocess.run(
+                [
+                    str(binary),
+                    "--database",
+                    str(database),
+                    "subscription",
+                    "run",
+                    "--id",
+                    str(failure_id),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            assert failure.returncode != 0, failure.stdout
+            assert failure_secret not in failure.stdout, failure.stdout
+            assert "token=" not in failure.stdout, failure.stdout
+            assert (
+                int(
+                    db_scalar(
+                        database,
+                        "SELECT last_fetch_status FROM subscriptions WHERE id = ?",
+                        (failure_id,),
+                    )
+                )
+                == 503
+            )
+            stored_error = str(
+                db_scalar(
+                    database,
+                    "SELECT last_error FROM subscriptions WHERE id = ?",
+                    (failure_id,),
+                )
+            )
+            assert "503" in stored_error, stored_error
+            assert failure_secret not in stored_error, stored_error
+            assert "token=" not in stored_error, stored_error
+            assert (
+                int(
+                    db_scalar(
+                        database,
+                        "SELECT consecutive_failures FROM subscriptions WHERE id = ?",
+                        (failure_id,),
+                    )
+                )
+                == 1
+            )
+            assert (
+                int(
+                    db_scalar(
+                        database,
+                        "SELECT lease_until FROM subscriptions WHERE id = ?",
+                        (failure_id,),
+                    )
+                )
+                == 0
+            )
+            assert_redacted_management_output(
+                binary,
+                database,
+                failure_id,
+                failure_secret,
+            )
     finally:
         for server in (http_server, socks5_server):
             if server is not None:
@@ -432,7 +518,7 @@ def main() -> None:
     run_smoke(Path(args.binary).resolve())
     print(
         "subscription smoke test passed: CRUD, redaction, proxy-list/source-list, "
-        "ETag/304 cache, recurring service, SQLite persistence, SIGTERM"
+        "ETag/304 cache, recurring service, safe HTTP failures, SQLite persistence, SIGTERM"
     )
 
 
