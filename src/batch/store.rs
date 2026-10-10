@@ -176,7 +176,6 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_claim
     ON subscriptions(enabled, next_run_at, lease_until);
 ";
 
-
 pub(super) struct Store {
     conn: Connection,
 }

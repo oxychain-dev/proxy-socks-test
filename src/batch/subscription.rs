@@ -171,9 +171,7 @@ impl SubscriptionDb {
                  ORDER BY next_run_at, id
                  LIMIT 1"
             ))?;
-            statement
-                .query_row([now], subscription_from_row)
-                .optional()?
+            statement.query_row([now], subscription_from_row).optional()?
         };
 
         if let Some(value) = subscription.as_ref() {
