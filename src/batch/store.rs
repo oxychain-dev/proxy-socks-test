@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{named_params, params, Connection};
 use std::{path::Path, time::Duration};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const V1_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -169,6 +169,13 @@ CREATE INDEX IF NOT EXISTS idx_runs_subscription
 CREATE INDEX IF NOT EXISTS idx_subscription_runs_subscription
     ON subscription_runs(subscription_id, fetched_at);
 ";
+const V4_MIGRATION: &str = "
+ALTER TABLE subscriptions ADD COLUMN lease_until INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_claim
+    ON subscriptions(enabled, next_run_at, lease_until);
+";
+
 
 pub(super) struct Store {
     conn: Connection,
@@ -227,6 +234,19 @@ impl Store {
                 [],
             )?;
             tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+            current = 3;
+        }
+
+        if current < 4 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(V4_MIGRATION)?;
+            tx.execute(
+                "INSERT INTO schema_meta(key, value) VALUES ('schema_version', '4')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [],
+            )?;
+            tx.pragma_update(None, "user_version", 4)?;
             tx.commit()?;
         }
 
