@@ -460,8 +460,23 @@ fn set_private_permissions(path: &str) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(Path::new(path), std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to set private permissions on database {path}"))?;
+
+        let set_if_exists = |candidate: &Path| -> Result<()> {
+            if candidate.exists() {
+                std::fs::set_permissions(candidate, std::fs::Permissions::from_mode(0o600))
+                    .with_context(|| {
+                        format!("failed to set private permissions on {}", candidate.display())
+                    })?;
+            }
+            Ok(())
+        };
+
+        let database = Path::new(path);
+        set_if_exists(database)?;
+        let wal = std::path::PathBuf::from(format!("{path}-wal"));
+        let shm = std::path::PathBuf::from(format!("{path}-shm"));
+        set_if_exists(&wal)?;
+        set_if_exists(&shm)?;
     }
 
     Ok(())
