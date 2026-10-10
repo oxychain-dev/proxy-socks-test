@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -68,5 +73,5 @@ jobs:
           sudo ln -sf "$PWD/target/debug/proxy-socks-test" /usr/local/bin/proxy-socks-test
           systemd-analyze verify examples/proxy-socks-test.service
 
-      - name: Diff whitespace check
-        run: git diff --check HEAD^ HEAD
+      - name: Branch diff whitespace check
+        run: git diff --check origin/main...HEAD
