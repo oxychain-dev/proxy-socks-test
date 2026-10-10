@@ -51,6 +51,16 @@ class SubscriptionFixtureHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/oversize":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            chunk = b"x" * (1024 * 1024)
+            for _ in range(17):
+                self.wfile.write(chunk)
+                self.wfile.flush()
+            return
+
         if parsed.path == "/failure":
             self.send_response(503)
             payload = b"fixture unavailable"
@@ -213,6 +223,17 @@ def assert_redacted_management_output(
     for output in (listed, shown):
         assert secret not in output, output
         assert "token=" not in output, output
+
+
+def assert_sqlite_companion_permissions(database: Path) -> None:
+    for path in (
+        database,
+        Path(str(database) + "-wal"),
+        Path(str(database) + "-shm"),
+    ):
+        assert path.exists(), f"expected SQLite file while service is active: {path}"
+        mode = os.stat(path).st_mode & 0o777
+        assert mode == 0o600, (path, oct(mode))
 
 
 def assert_database_state(
@@ -387,6 +408,7 @@ def run_smoke(binary: Path) -> None:
             )
             try:
                 wait_for_subscription_runs(database, direct_id, baseline + 1)
+                assert_sqlite_companion_permissions(database)
                 service.send_signal(signal.SIGTERM)
                 stdout, _ = service.communicate(timeout=8)
             finally:
@@ -497,6 +519,38 @@ def run_smoke(binary: Path) -> None:
                 failure_id,
                 failure_secret,
             )
+
+            oversize_secret = "oversize-secret"
+            oversize_id = add_subscription(
+                binary,
+                database,
+                name="oversize-fixture",
+                url=(
+                    f"http://{LOOPBACK_IP}:{http_port}/oversize"
+                    f"?token={oversize_secret}"
+                ),
+                interval_seconds=60,
+                check_url=check_url,
+            )
+            oversize = subprocess.run(
+                [
+                    str(binary),
+                    "--database",
+                    str(database),
+                    "subscription",
+                    "run",
+                    "--id",
+                    str(oversize_id),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+            assert oversize.returncode != 0, oversize.stdout
+            assert "exceeds maximum size" in oversize.stdout, oversize.stdout
+            assert oversize_secret not in oversize.stdout, oversize.stdout
+            assert "token=" not in oversize.stdout, oversize.stdout
     finally:
         for server in (http_server, socks5_server):
             if server is not None:
@@ -518,7 +572,8 @@ def main() -> None:
     run_smoke(Path(args.binary).resolve())
     print(
         "subscription smoke test passed: CRUD, redaction, proxy-list/source-list, "
-        "ETag/304 cache, recurring service, safe HTTP failures, SQLite persistence, SIGTERM"
+        "ETag/304 cache, recurring service, safe HTTP failures, streaming source cap, "
+        "SQLite/WAL/SHM permissions, SIGTERM"
     )
 
 
