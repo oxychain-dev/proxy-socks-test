@@ -157,9 +157,7 @@ fn export_tsv(conn: &Connection, matches: &ArgMatches) -> Result<()> {
 
 fn export_valid(conn: &Connection, matches: &ArgMatches) -> Result<()> {
     let output = required(matches, "output")?;
-    let run_id = required(matches, "run-id")?
-        .parse::<i64>()
-        .context("invalid --run-id")?;
+    let run_id = required(matches, "run-id")?.parse::<i64>().context("invalid --run-id")?;
     let interface = matches.get_one::<String>("interface").cloned();
     let protocol = matches.get_one::<String>("protocol").cloned();
 
@@ -443,9 +441,7 @@ fn filters_from_matches(matches: &ArgMatches) -> Result<QueryFilters> {
         subscription_id: parse_optional_i64(matches, "subscription-id")?,
         interface: matches.get_one::<String>("interface").cloned(),
         protocol: matches.get_one::<String>("protocol").cloned(),
-        valid: matches
-            .get_one::<String>("valid")
-            .map(|value| value == "true"),
+        valid: matches.get_one::<String>("valid").map(|value| value == "true"),
         since: matches.get_one::<String>("since").cloned(),
         until: matches.get_one::<String>("until").cloned(),
     })
@@ -484,16 +480,14 @@ fn build_filter_sql(filters: &QueryFilters) -> (String, Vec<Value>) {
         values.push(Value::Text(until.clone()));
     }
 
-    let sql = if clauses.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", clauses.join(" AND "))
-    };
+    let sql =
+        if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
     (sql, values)
 }
 
 fn validate_time_filters(conn: &Connection, filters: &QueryFilters) -> Result<()> {
-    for (flag, value) in [("--since", filters.since.as_deref()), ("--until", filters.until.as_deref())]
+    for (flag, value) in
+        [("--since", filters.since.as_deref()), ("--until", filters.until.as_deref())]
     {
         if let Some(value) = value {
             let valid: i64 =
@@ -589,10 +583,7 @@ fn export_row_to_tsv(row: &ExportRow) -> String {
 }
 
 fn required(matches: &ArgMatches, name: &str) -> Result<String> {
-    matches
-        .get_one::<String>(name)
-        .cloned()
-        .ok_or_else(|| anyhow!("missing --{name}"))
+    matches.get_one::<String>(name).cloned().ok_or_else(|| anyhow!("missing --{name}"))
 }
 
 fn parse_optional_i64(matches: &ArgMatches, name: &str) -> Result<Option<i64>> {
