@@ -40,6 +40,12 @@ jobs:
           target/debug/proxy-socks-test subscription --help
           target/debug/proxy-socks-test service --help
           test "$(target/debug/proxy-socks-test --version)" = "proxy-socks-test 0.4.0"
+      - name: Verify systemd service example
+        run: |
+          sudo useradd --system --home-dir /var/lib/proxy-socks-test --shell /usr/sbin/nologin proxy-socks-test
+          sudo install -d -o proxy-socks-test -g proxy-socks-test -m 0750 /var/lib/proxy-socks-test
+          sudo ln -sf "$PWD/target/debug/proxy-socks-test" /usr/local/bin/proxy-socks-test
+          systemd-analyze verify examples/proxy-socks-test.service
       - name: Diff check
         run: git diff --check
       - name: Commit generated lockfile and formatting
