@@ -1,11 +1,7 @@
 use super::store::Store;
 use anyhow::{anyhow, Context, Result};
 use clap::ArgMatches;
-use rusqlite::{
-    params, params_from_iter,
-    types::Value,
-    Connection, OptionalExtension,
-};
+use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 use std::{
     cmp::Ordering,
     collections::BTreeSet,
