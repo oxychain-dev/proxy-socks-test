@@ -183,7 +183,6 @@ CREATE INDEX IF NOT EXISTS idx_proxy_checks_valid_auth
     ON proxy_checks(valid, auth_required);
 ";
 
-
 pub(super) struct Store {
     conn: Connection,
 }
