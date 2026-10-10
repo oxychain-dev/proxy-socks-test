@@ -791,6 +791,70 @@ fn subscription_command() -> clap::Command {
         .subcommand(id_command("run", "run one subscription immediately"))
 }
 
+fn export_command() -> clap::Command {
+    let tsv = clap::Command::new("tsv")
+        .about("export stored SQLite proxy checks as TSV without re-testing")
+        .arg(clap::Arg::new("output").long("output").required(true).value_name("path"))
+        .arg(clap::Arg::new("run-id").long("run-id").value_name("id"))
+        .arg(clap::Arg::new("subscription-id").long("subscription-id").value_name("id"))
+        .arg(clap::Arg::new("interface").long("interface").value_name("name"))
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_parser(["socks4", "socks4a", "socks5"])
+                .value_name("protocol"),
+        )
+        .arg(
+            clap::Arg::new("valid")
+                .long("valid")
+                .value_parser(["true", "false"])
+                .value_name("bool"),
+        )
+        .arg(
+            clap::Arg::new("since")
+                .long("since")
+                .value_name("datetime")
+                .help("filter runs starting on/after a SQLite-compatible UTC date/time"),
+        )
+        .arg(
+            clap::Arg::new("until")
+                .long("until")
+                .value_name("datetime")
+                .help("filter runs starting on/before a SQLite-compatible UTC date/time"),
+        );
+
+    let valid = clap::Command::new("valid")
+        .about("export credential-free valid proxy links from a stored run")
+        .arg(clap::Arg::new("run-id").long("run-id").required(true).value_name("id"))
+        .arg(clap::Arg::new("output").long("output").required(true).value_name("path"))
+        .arg(clap::Arg::new("interface").long("interface").value_name("name"))
+        .arg(
+            clap::Arg::new("protocol")
+                .long("protocol")
+                .value_parser(["socks4", "socks4a", "socks5"])
+                .value_name("protocol"),
+        );
+
+    clap::Command::new("export")
+        .about("export stored SQLite results without network tests")
+        .subcommand_required(true)
+        .subcommand(tsv)
+        .subcommand(valid)
+}
+
+fn report_command() -> clap::Command {
+    clap::Command::new("report")
+        .about("print a professional report for the latest or selected SQLite run")
+        .arg(clap::Arg::new("run-id").long("run-id").value_name("id"))
+        .arg(
+            clap::Arg::new("limit")
+                .long("limit")
+                .default_value("10")
+                .value_name("count")
+                .help("maximum number of ranked valid proxies to show"),
+        )
+}
+
 fn service_command() -> clap::Command {
     clap::Command::new("service")
         .about("run due enabled subscriptions until a shutdown signal")
@@ -1028,6 +1092,8 @@ fn parse_args() -> clap::ArgMatches {
         )
         .subcommand(subscription_command())
         .subcommand(service_command())
+        .subcommand(export_command())
+        .subcommand(report_command())
         .arg(
             clap::Arg::new("debug")
                 .long("debug")
@@ -1079,6 +1145,12 @@ async fn main() -> Result<()> {
                 service_matches.get_flag("once"),
             )
             .await;
+        }
+        Some(("export", export_matches)) => {
+            return batch::run_export_command(export_matches, &database);
+        }
+        Some(("report", report_matches)) => {
+            return batch::run_report_command(report_matches, &database);
         }
         _ => {}
     }
