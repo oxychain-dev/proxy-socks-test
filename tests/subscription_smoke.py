@@ -241,7 +241,7 @@ def assert_database_state(
     direct_id: int,
     source_list_id: int,
 ) -> None:
-    assert int(db_scalar(database, "PRAGMA user_version")) == 4
+    assert int(db_scalar(database, "PRAGMA user_version")) == 5
     assert int(db_scalar(database, "SELECT COUNT(*) FROM subscriptions")) == 2
     assert int(db_scalar(database, "SELECT COUNT(*) FROM runs")) >= 2
     assert (
