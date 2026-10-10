@@ -33,6 +33,8 @@ jobs:
         run: cargo build --locked
       - name: Existing controlled batch smoke
         run: python3 tests/batch_smoke.py target/debug/proxy-socks-test
+      - name: Controlled subscription/service smoke
+        run: python3 tests/subscription_smoke.py target/debug/proxy-socks-test
       - name: CLI command help
         run: |
           target/debug/proxy-socks-test subscription --help
