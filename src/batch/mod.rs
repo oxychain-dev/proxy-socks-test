@@ -1,6 +1,7 @@
 mod input;
 mod interface;
 mod model;
+mod query;
 mod store;
 mod subscription;
 mod validate;
@@ -335,6 +336,14 @@ fn average(values: &[f64]) -> Option<f64> {
 
 fn format_optional_metric(value: Option<f64>) -> String {
     value.map(|value| format!("{value:.3}")).unwrap_or_else(|| "-".to_owned())
+}
+
+pub fn run_export_command(matches: &clap::ArgMatches, database: &str) -> Result<()> {
+    query::handle_export_command(matches, database)
+}
+
+pub fn run_report_command(matches: &clap::ArgMatches, database: &str) -> Result<()> {
+    query::handle_report_command(matches, database)
 }
 
 pub async fn run_subscription_command(matches: &clap::ArgMatches, database: &str) -> Result<()> {
