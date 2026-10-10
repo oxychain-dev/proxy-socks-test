@@ -835,7 +835,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn request_error_descriptions_do_not_echo_urls() {
         // URL-bearing reqwest errors are deliberately reduced to category-only text before
         // persistence or CLI display, so source credentials/query tokens cannot leak.
@@ -850,6 +849,7 @@ mod tests {
         assert!(!message.contains("127.0.0.1"));
     }
 
+    #[test]
     fn backoff_is_bounded_and_exponential() {
         assert_eq!(retry_delay(60, 1), 60);
         assert_eq!(retry_delay(60, 2), 120);
