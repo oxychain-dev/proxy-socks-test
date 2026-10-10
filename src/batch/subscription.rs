@@ -7,9 +7,11 @@ use reqwest::{
     header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED},
     Client, StatusCode,
 };
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
+
+const RUN_LEASE_SECONDS: i64 = 6 * 60 * 60;
 
 #[derive(Clone, Debug)]
 struct Subscription {
@@ -43,6 +45,7 @@ struct Subscription {
     item_count: usize,
     consecutive_failures: u32,
     next_run_at: i64,
+    lease_until: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +144,7 @@ impl SubscriptionDb {
         let changed = self.conn.execute(
             "UPDATE subscriptions
              SET enabled = ?2, next_run_at = CASE WHEN ?2 = 1 THEN 0 ELSE next_run_at END,
-                 updated_at = CURRENT_TIMESTAMP
+                 lease_until = 0, updated_at = CURRENT_TIMESTAMP
              WHERE id = ?1",
             params![id, i64::from(enabled)],
         )?;
@@ -159,12 +162,53 @@ impl SubscriptionDb {
         Ok(())
     }
 
-    fn due(&self, now: i64) -> Result<Vec<Subscription>> {
-        let mut statement = self.conn.prepare(&format!(
-            "{SUBSCRIPTION_SELECT} WHERE enabled = 1 AND next_run_at <= ?1 ORDER BY next_run_at, id"
-        ))?;
-        let rows = statement.query_map([now], subscription_from_row)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    fn claim_next_due(&mut self, now: i64) -> Result<Option<Subscription>> {
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let subscription = {
+            let mut statement = tx.prepare(&format!(
+                "{SUBSCRIPTION_SELECT}
+                 WHERE enabled = 1 AND next_run_at <= ?1 AND lease_until <= ?1
+                 ORDER BY next_run_at, id
+                 LIMIT 1"
+            ))?;
+            statement
+                .query_row([now], subscription_from_row)
+                .optional()?
+        };
+
+        if let Some(value) = subscription.as_ref() {
+            tx.execute(
+                "UPDATE subscriptions SET lease_until = ?2, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![value.id, now.saturating_add(RUN_LEASE_SECONDS)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(subscription)
+    }
+
+    fn claim_one(&mut self, id: i64, now: i64) -> Result<Subscription> {
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let subscription = {
+            let mut statement = tx.prepare(&format!("{SUBSCRIPTION_SELECT} WHERE id = ?1"))?;
+            statement
+                .query_row([id], subscription_from_row)
+                .optional()?
+                .ok_or_else(|| anyhow!("subscription {id} not found"))?
+        };
+        if subscription.lease_until > now {
+            return Err(anyhow!(
+                "subscription {id} is already running (lease active until {})",
+                subscription.lease_until
+            ));
+        }
+        tx.execute(
+            "UPDATE subscriptions SET lease_until = ?2, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1",
+            params![id, now.saturating_add(RUN_LEASE_SECONDS)],
+        )?;
+        tx.commit()?;
+        Ok(subscription)
     }
 
     fn save_fetch(
@@ -200,7 +244,8 @@ impl SubscriptionDb {
         self.conn.execute(
             "UPDATE subscriptions
              SET last_success_at = ?2, last_error = NULL, item_count = ?3,
-                 consecutive_failures = 0, next_run_at = ?4, updated_at = CURRENT_TIMESTAMP
+                 consecutive_failures = 0, next_run_at = ?4, lease_until = 0,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE id = ?1",
             params![subscription.id, now, usize_to_i64(outcome.proxy_count), next_run_at,],
         )?;
@@ -229,7 +274,7 @@ impl SubscriptionDb {
         self.conn.execute(
             "UPDATE subscriptions
              SET last_error = ?2, consecutive_failures = ?3, next_run_at = ?4,
-                 last_fetch_status = COALESCE(?5, last_fetch_status),
+                 lease_until = 0, last_fetch_status = COALESCE(?5, last_fetch_status),
                  last_fetch_at = CASE WHEN ?5 IS NULL THEN last_fetch_at ELSE ?6 END,
                  updated_at = CURRENT_TIMESTAMP
              WHERE id = ?1",
@@ -276,7 +321,7 @@ SELECT
     timeout_seconds, check_url, latency_samples, download_url, upload_url,
     download_bytes, upload_bytes, ip_info_url_template, etag, last_modified,
     cached_payload, last_fetch_status, last_fetch_at, last_success_at, last_error,
-    item_count, consecutive_failures, next_run_at
+    item_count, consecutive_failures, next_run_at, lease_until
 FROM subscriptions
 ";
 
@@ -314,13 +359,14 @@ fn subscription_from_row(row: &Row<'_>) -> rusqlite::Result<Subscription> {
         item_count: i64_to_usize(row.get(27)?),
         consecutive_failures: u32::try_from(row.get::<_, i64>(28)?).unwrap_or(u32::MAX),
         next_run_at: row.get(29)?,
+        lease_until: row.get(30)?,
     })
 }
 
 pub(super) async fn handle_subscription_command(
     matches: &ArgMatches, database: &str,
 ) -> Result<()> {
-    let db = SubscriptionDb::open(database)?;
+    let mut db = SubscriptionDb::open(database)?;
     match matches.subcommand() {
         Some(("add", args)) => {
             let new = new_subscription_from_matches(args)?;
@@ -374,7 +420,7 @@ pub(super) async fn handle_subscription_command(
         }
         Some(("run", args)) => {
             let id = parse_i64(args, "id")?;
-            let subscription = db.get(id)?;
+            let subscription = db.claim_one(id, unix_now()?)?;
             run_one(database, &db, &subscription).await
         }
         _ => Err(anyhow!("subscription subcommand is required")),
@@ -387,7 +433,7 @@ pub(super) async fn run_service(
     if poll_seconds == 0 {
         return Err(anyhow!("--poll-seconds must be greater than zero"));
     }
-    let db = SubscriptionDb::open(database)?;
+    let mut db = SubscriptionDb::open(database)?;
     let now = unix_now()?;
     let (pruned_runs, pruned_subscription_runs) = db.prune(retention_days, now)?;
     if pruned_runs > 0 || pruned_subscription_runs > 0 {
@@ -397,8 +443,7 @@ pub(super) async fn run_service(
     }
 
     loop {
-        let due = db.due(unix_now()?)?;
-        for subscription in due {
+        while let Some(subscription) = db.claim_next_due(unix_now()?)? {
             if let Err(err) = run_one(database, &db, &subscription).await {
                 eprintln!(
                     "subscription run failed: id={} name={} error={err:#}",
@@ -608,6 +653,7 @@ fn print_subscription(value: &Subscription) {
     println!("item_count={}", value.item_count);
     println!("consecutive_failures={}", value.consecutive_failures);
     println!("next_run_at={}", value.next_run_at);
+    println!("lease_until={}", value.lease_until);
     println!(
         "last_error={}",
         value.last_error.as_deref().unwrap_or_default().replace(['\t', '\r', '\n'], " ")
@@ -746,5 +792,18 @@ mod tests {
     fn retention_zero_disables_pruning() {
         let db = SubscriptionDb::open(":memory:").unwrap();
         assert_eq!(db.prune(0, 1_000).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn claim_lease_prevents_duplicate_concurrent_runs() {
+        let mut db = SubscriptionDb::open(":memory:").unwrap();
+        let id = db.create(&new_subscription("https://example.com/list")).unwrap();
+        let first = db.claim_one(id, 1_000).unwrap();
+        assert_eq!(first.id, id);
+        let err = db.claim_one(id, 1_001).unwrap_err();
+        assert!(err.to_string().contains("already running"));
+
+        db.record_failure(&first, 1_002, None, "fixture").unwrap();
+        assert!(db.claim_one(id, 1_003).is_ok());
     }
 }
